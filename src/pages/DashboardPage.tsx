@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { articleService } from '@/services/article.service'
 import { sessionService } from '@/services/session.service'
-import { BookOpen, Calendar, Map, Plus, Clock } from 'lucide-react'
+import { BookOpen, Calendar, Map, Plus, Search } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { de } from 'date-fns/locale'
 import ArticleTypeBadge from '@/components/ui/ArticleTypeBadge'
@@ -28,15 +28,9 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
     },
   })
 
-  const stats = [
-    { label: 'Artikel', value: articles?.length ?? 0, icon: <BookOpen size={20} />, href: '/articles', color: 'text-blue-400' },
-    { label: 'Sessions', value: sessions?.length ?? 0, icon: <Calendar size={20} />, href: '/sessions', color: 'text-emerald-400' },
-  ]
-
   return (
     <div>
       <PageHeader title="Dashboard"
-        subtitle="Willkommen in der Welt der Sieben Gezeichneten"
         actions={canEdit ? (
           <Link to="/articles/new" className="btn-primary">
             <Plus size={16} /> Artikel
@@ -45,14 +39,13 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
       />
 
       <div className="p-6 space-y-8">
-        {/* Quick actions */}
         {canEdit && (
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {[
               { label: 'Neuer Artikel', to: '/articles/new', icon: <BookOpen size={18} />, color: 'bg-blue-600' },
               { label: 'Neue Session', to: '/sessions/new', icon: <Calendar size={18} />, color: 'bg-emerald-600' },
-              { label: 'Alle Karten', to: '/maps', icon: <Map size={18} />, color: 'bg-amber-600' },
-              { label: 'Suche', to: '/search', icon: <Clock size={18} />, color: 'bg-purple-600' },
+              { label: 'Karten', to: '/maps', icon: <Map size={18} />, color: 'bg-amber-600' },
+              { label: 'Suche', to: '/search', icon: <Search size={18} />, color: 'bg-purple-600' },
             ].map(a => (
               <Link key={a.to} to={a.to}
                 className="card p-4 flex items-center gap-3 hover:border-surface-400 transition-colors">
@@ -63,7 +56,6 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
           </div>
         )}
 
-        {/* Recent articles */}
         <section>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-lg font-semibold text-slate-100">Zuletzt bearbeitet</h2>
@@ -83,16 +75,15 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
             ))}
             {(!articles || articles.length === 0) && (
               <div className="card p-6 text-center text-slate-400 text-sm">
-                Noch keine Artikel. {canEdit && <Link to="/articles/new" className="text-brand-400 hover:underline">Ersten Artikel erstellen</Link>}
+                Noch keine Artikel. {canEdit && <Link to="/articles/new" className="text-brand-400 hover:underline">Ersten erstellen</Link>}
               </div>
             )}
           </div>
         </section>
 
-        {/* Recent sessions */}
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold text-slate-100">Letzte Sessions</h2>
+            <h2 className="text-lg font-semibold text-slate-100">Sessions</h2>
             <Link to="/sessions" className="text-sm text-brand-400 hover:underline">Alle →</Link>
           </div>
           <div className="grid gap-2">
@@ -112,7 +103,7 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
             ))}
             {(!sessions || sessions.length === 0) && (
               <div className="card p-6 text-center text-slate-400 text-sm">
-                Noch keine Sessions. {canEdit && <Link to="/sessions/new" className="text-brand-400 hover:underline">Session anlegen</Link>}
+                Noch keine Sessions.
               </div>
             )}
           </div>

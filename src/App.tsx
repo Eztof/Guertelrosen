@@ -17,12 +17,10 @@ import CollectionsPage from '@/pages/CollectionsPage'
 import MembersPage from '@/pages/MembersPage'
 import SearchPage from '@/pages/SearchPage'
 import ProfilePage from '@/pages/ProfilePage'
-import InvitePage from '@/pages/InvitePage'
 
 // Layout
 import AppLayout from '@/components/layout/AppLayout'
 
-// The main world ID is stored in localStorage after selection
 const WORLD_KEY = '7g_world_id'
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -66,7 +64,6 @@ export default function App() {
       <HashRouter>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
-          <Route path="/invite" element={<InvitePage />} />
           <Route path="/worlds" element={<RequireAuth><WorldSelectPage /></RequireAuth>} />
           <Route path="/*" element={<RequireAuth><WorldRoutes /></RequireAuth>} />
         </Routes>

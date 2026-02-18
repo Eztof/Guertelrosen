@@ -26,24 +26,12 @@ export const worldService = {
   },
 
   async createWorld(name: string, description: string) {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error('Not authenticated')
-
     const { data, error } = await supabase
-      .from('worlds')
-      .insert({ name, description, owner_id: user.id })
-      .select()
-      .single()
+      .rpc('create_world_with_membership', {
+        p_name: name,
+        p_description: description || null,
+      })
     if (error) throw error
-
-    // Add creator as GM
-    await supabase.from('world_members').insert({
-      world_id: data.id,
-      user_id: user.id,
-      role: 'gm',
-      status: 'active',
-    })
-
     return data
   },
 
@@ -71,19 +59,14 @@ export const worldService = {
     return data?.role ?? null
   },
 
-  // Invite codes
-  async createInviteCode(worldId: string, role: 'editor' | 'player') {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error('Not authenticated')
-
-    const code = crypto.randomUUID().split('-')[0].toUpperCase()
+  async addMember(worldId: string, userId: string, role: 'editor' | 'player') {
     const { data, error } = await supabase
-      .from('invite_codes')
+      .from('world_members')
       .insert({
         world_id: worldId,
-        code,
+        user_id: userId,
         role,
-        created_by: user.id,
+        status: 'active',
       })
       .select()
       .single()
@@ -91,52 +74,22 @@ export const worldService = {
     return data
   },
 
-  async useInviteCode(code: string) {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) throw new Error('Not authenticated')
-
-    // Find the code
-    const { data: invite, error: findError } = await supabase
-      .from('invite_codes')
-      .select('*')
-      .eq('code', code.toUpperCase())
-      .is('used_by', null)
-      .single()
-
-    if (findError || !invite) throw new Error('Ungültiger oder bereits verwendeter Code')
-
-    // Check expiry
-    if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      throw new Error('Einladungscode abgelaufen')
-    }
-
-    // Add member
-    const { error: memberError } = await supabase
-      .from('world_members')
-      .insert({
-        world_id: invite.world_id,
-        user_id: user.id,
-        role: invite.role,
-        status: 'active',
-      })
-    if (memberError) throw memberError
-
-    // Mark used
-    await supabase
-      .from('invite_codes')
-      .update({ used_by: user.id, used_at: new Date().toISOString() })
-      .eq('id', invite.id)
-
-    return invite.world_id
-  },
-
-  async getInviteCodes(worldId: string) {
+  async updateMemberRole(memberId: string, role: 'gm' | 'editor' | 'player') {
     const { data, error } = await supabase
-      .from('invite_codes')
-      .select('*')
-      .eq('world_id', worldId)
-      .order('created_at', { ascending: false })
+      .from('world_members')
+      .update({ role })
+      .eq('id', memberId)
+      .select()
+      .single()
     if (error) throw error
     return data
+  },
+
+  async removeMember(memberId: string) {
+    const { error } = await supabase
+      .from('world_members')
+      .delete()
+      .eq('id', memberId)
+    if (error) throw error
   },
 }

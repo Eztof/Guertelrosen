@@ -2,7 +2,7 @@ import { useState, ReactNode } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen, Map, Calendar, Users, FolderOpen, Search,
-  LogOut, User, ChevronLeft, Menu, X, Globe, Shield,
+  LogOut, User, ChevronLeft, Menu, Globe, Shield,
   Home, Plus
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
@@ -10,7 +10,6 @@ import { useWorld } from '@/hooks/useWorld'
 import { useQuery } from '@tanstack/react-query'
 import { worldService } from '@/services/world.service'
 import { collectionService } from '@/services/collection.service'
-import { articleService } from '@/services/article.service'
 
 const WORLD_KEY = '7g_world_id'
 
@@ -18,7 +17,6 @@ interface NavItem {
   to: string
   icon: React.ReactNode
   label: string
-  gmOnly?: boolean
 }
 
 const navItems: NavItem[] = [
@@ -27,7 +25,7 @@ const navItems: NavItem[] = [
   { to: '/collections', icon: <FolderOpen size={18} />, label: 'Sammlungen' },
   { to: '/sessions', icon: <Calendar size={18} />, label: 'Sessions' },
   { to: '/maps', icon: <Map size={18} />, label: 'Karten' },
-  { to: '/members', icon: <Users size={18} />, label: 'Mitglieder', gmOnly: true },
+  { to: '/members', icon: <Users size={18} />, label: 'Mitglieder' },
   { to: '/search', icon: <Search size={18} />, label: 'Suche' },
 ]
 
@@ -64,13 +62,11 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
           <Menu size={18} />
         </button>
         {navItems.map(item => (
-          (!item.gmOnly || isGm) && (
-            <Link key={item.to} to={item.to}
-              className={`p-2 rounded-lg transition-colors ${isActive(item.to) ? 'bg-brand-600 text-white' : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'}`}
-              title={item.label}>
-              {item.icon}
-            </Link>
-          )
+          <Link key={item.to} to={item.to}
+            className={`p-2 rounded-lg transition-colors ${isActive(item.to) ? 'bg-brand-600 text-white' : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'}`}
+            title={item.label}>
+            {item.icon}
+          </Link>
         ))}
       </div>
     )
@@ -78,7 +74,6 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
 
   return (
     <div className="flex flex-col w-64 bg-surface-800 border-r border-surface-600 h-full">
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-surface-600">
         <div className="flex items-center gap-2 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-brand-600 flex items-center justify-center flex-shrink-0">
@@ -94,24 +89,19 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
         </button>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-1">
-        {navItems.map(item => {
-          if (item.gmOnly && !isGm) return null
-          return (
-            <Link key={item.to} to={item.to}
-              className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                isActive(item.to)
-                  ? 'bg-brand-600 text-white'
-                  : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'
-              }`}>
-              {item.icon}
-              {item.label}
-            </Link>
-          )
-        })}
+        {navItems.map(item => (
+          <Link key={item.to} to={item.to}
+            className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+              isActive(item.to)
+                ? 'bg-brand-600 text-white'
+                : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'
+            }`}>
+            {item.icon}
+            {item.label}
+          </Link>
+        ))}
 
-        {/* Collections tree */}
         {collections && collections.length > 0 && (
           <div className="pt-3 mt-3 border-t border-surface-600">
             <div className="text-xs font-medium text-slate-500 uppercase tracking-wider px-3 mb-2">Sammlungen</div>
@@ -145,7 +135,6 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
         )}
       </nav>
 
-      {/* Footer */}
       <div className="border-t border-surface-600 p-3 space-y-1">
         <button onClick={handleSwitchWorld}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-slate-400 hover:bg-surface-700 hover:text-slate-200 transition-colors">
@@ -169,7 +158,6 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
 
 export default function AppLayout({ worldId, children }: { worldId: string; children: ReactNode }) {
   const [collapsed, setCollapsed] = useState(false)
-  const navigate = useNavigate()
 
   return (
     <div className="flex h-screen overflow-hidden">
