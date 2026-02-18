@@ -61,22 +61,25 @@ export default function WorldSelectPage() {
         </div>
 
         <div className="grid gap-3 mb-6">
-          {worlds?.map(({ worlds: world, role }) => world && (
-            <button key={world.id} onClick={() => selectWorld(world.id)}
-              className="card p-4 flex items-center justify-between hover:border-brand-500 transition-colors group text-left">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-brand-900/50 border border-brand-700 flex items-center justify-center">
-                  <Globe size={24} className="text-brand-400" />
+          {worlds?.map(({ worlds: world, role }) => {
+            const w = world as any
+            return w && (
+              <button key={w.id} onClick={() => selectWorld(w.id)}
+                className="card p-4 flex items-center justify-between hover:border-brand-500 transition-colors group text-left">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-brand-900/50 border border-brand-700 flex items-center justify-center">
+                    <Globe size={24} className="text-brand-400" />
+                  </div>
+                  <div>
+                    <div className="font-semibold text-slate-100">{w.name}</div>
+                    {w.description && <div className="text-sm text-slate-400">{w.description}</div>}
+                    <div className="text-xs text-slate-500 mt-1">Rolle: {role}</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="font-semibold text-slate-100">{world.name}</div>
-                  {world.description && <div className="text-sm text-slate-400">{world.description}</div>}
-                  <div className="text-xs text-slate-500 mt-1">Rolle: {role}</div>
-                </div>
-              </div>
-              <ArrowRight size={18} className="text-slate-500 group-hover:text-brand-400 transition-colors" />
-            </button>
-          ))}
+                <ArrowRight size={18} className="text-slate-500 group-hover:text-brand-400 transition-colors" />
+              </button>
+            )
+          })}
           {(!worlds || worlds.length === 0) && (
             <div className="card p-8 text-center text-slate-400">
               Noch keine Welten. Erstelle eine oder tritt mit einem Einladungscode bei.
