@@ -1,5 +1,4 @@
 import { supabase } from '@/lib/supabase'
-import { nanoid } from 'nanoid' // We'll use crypto.randomUUID instead
 
 export const worldService = {
   async listMyWorlds() {
