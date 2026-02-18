@@ -19,18 +19,19 @@ export default function LoginPage() {
   if (user) return <Navigate to="/" replace />
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    try {
-      const { error } = await authService.signInWithPassword(email, password)
-      if (error) throw error
-      navigate('/')
-    } catch (e: unknown) {
-      toast.error((e as Error).message)
-    } finally {
-      setLoading(false)
-    }
+  e.preventDefault()
+  setLoading(true)
+  try {
+    const { data, error } = await authService.signInWithPassword(email, password)
+    if (error) throw error
+    console.log('Login session:', data.session)  // ← was steht hier?
+    navigate('/')
+  } catch (e: unknown) {
+    toast.error((e as Error).message)
+  } finally {
+    setLoading(false)
   }
+}
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
