@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { timelineService, type TimelineEventInput } from '@/services/timeline.service'
@@ -649,15 +649,14 @@ export default function TimelinePage({ worldId }: { worldId: string }) {
   const { data: timelines, isLoading: timelinesLoading } = useQuery({
     queryKey: ['timelines', worldId],
     queryFn: () => timelineService.listTimelines(worldId),
-    onSuccess: (data) => {
-      if (!selectedTimelineId && data.length > 0) setSelectedTimelineId(data[0].id)
-    },
   })
 
-  // Auto-select first timeline
-  if (!selectedTimelineId && timelines && timelines.length > 0 && !timelinesLoading) {
-    setSelectedTimelineId(timelines[0].id)
-  }
+  // Auto-select first timeline once loaded
+  useEffect(() => {
+    if (!selectedTimelineId && timelines && timelines.length > 0) {
+      setSelectedTimelineId(timelines[0].id)
+    }
+  }, [timelines, selectedTimelineId])
 
   const { data: events, isLoading: eventsLoading } = useQuery({
     queryKey: ['timeline-events', selectedTimelineId],
