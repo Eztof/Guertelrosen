@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen, Map, Calendar, Users, FolderOpen, Search,
   LogOut, User, ChevronLeft, Menu, Globe, Shield,
-  Home, Plus, Bell, Inbox
+  Home, Plus, Bell, Inbox, Clock
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useWorld } from '@/hooks/useWorld'
@@ -26,6 +26,7 @@ function useNavItems(isGm: boolean): NavItem[] {
     { to: '/articles', icon: <BookOpen size={18} />, label: 'Artikel' },
     { to: '/collections', icon: <FolderOpen size={18} />, label: 'Sammlungen' },
     { to: '/sessions', icon: <Calendar size={18} />, label: 'Sessions' },
+    { to: '/timeline', icon: <Clock size={18} />, label: 'Zeitstrahl' },
     { to: '/maps', icon: <Map size={18} />, label: 'Karten' },
     { to: '/members', icon: <Users size={18} />, label: 'Mitglieder' },
     { to: '/search', icon: <Search size={18} />, label: 'Suche' },

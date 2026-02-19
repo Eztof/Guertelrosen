@@ -19,6 +19,7 @@ import SearchPage from '@/pages/SearchPage'
 import ProfilePage from '@/pages/ProfilePage'
 import GmPanelPage from '@/pages/GmPanelPage'
 import InboxPage from '@/pages/InboxPage'
+import TimelinePage from '@/pages/TimelinePage'
 
 // Layout
 import AppLayout from '@/components/layout/AppLayout'
@@ -51,6 +52,7 @@ function WorldRoutes() {
           <Route path="/sessions/:id" element={<SessionDetailPage worldId={worldId} />} />
           <Route path="/maps" element={<MapsPage worldId={worldId} />} />
           <Route path="/maps/:id" element={<MapDetailPage worldId={worldId} />} />
+          <Route path="/timeline" element={<TimelinePage worldId={worldId} />} />
           <Route path="/members" element={<MembersPage worldId={worldId} />} />
           <Route path="/search" element={<SearchPage worldId={worldId} />} />
           <Route path="/profile" element={<ProfilePage />} />
