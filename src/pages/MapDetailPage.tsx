@@ -24,7 +24,6 @@ interface PinForm {
   dsa_date_str: string | null
 }
 
-// Extend pin type to include DSA date fields stored in notes JSON or meta
 type PinWithDate = Awaited<ReturnType<typeof mapService.getPins>>[number] & {
   dsa_date_str?: string | null
   dsa_date_sort?: number | null
@@ -42,7 +41,19 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
   const [showPath, setShowPath] = useState(true)
   const [pinDsaDate, setPinDsaDate] = useState<DsaDate | null>(null)
 
-  // For SVG path overlay we need the image dimensions
+  // Zoom & pan state
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const isPanning = useRef(false)
+  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 })
+  const lastTouchDist = useRef<number | null>(null)
+
+  // Drag state for pins
+  const draggingPinId = useRef<string | null>(null)
+  const dragStartPos = useRef<{ clientX: number; clientY: number } | null>(null)
+  const isDragging = useRef(false)
+
+  const mapContainerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null)
 
@@ -65,30 +76,213 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
 
   const handleImageLoad = () => {
     if (imgRef.current) {
-      setImgSize({ w: imgRef.current.offsetWidth, h: imgRef.current.offsetHeight })
+      setImgSize({ w: imgRef.current.naturalWidth, h: imgRef.current.naturalHeight })
     }
   }
 
-  useEffect(() => {
-    const handleResize = () => {
-      if (imgRef.current) {
-        setImgSize({ w: imgRef.current.offsetWidth, h: imgRef.current.offsetHeight })
-      }
+  // ── Zoom helpers ────────────────────────────────────────────────────────────
+  const clampZoom = (z: number) => Math.min(Math.max(z, 0.5), 5)
+
+  // Mousewheel zoom centered on cursor position
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    const container = mapContainerRef.current
+    if (!container) return
+    const rect = container.getBoundingClientRect()
+
+    // Cursor position relative to container
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+
+    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
+    setZoom(prev => {
+      const next = clampZoom(prev * factor)
+      const scale = next / prev
+      // Adjust pan so the point under cursor stays fixed
+      setPan(p => ({
+        x: cx - scale * (cx - p.x),
+        y: cy - scale * (cy - p.y),
+      }))
+      return next
+    })
+  }, [])
+
+  // Touch pinch-to-zoom
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      lastTouchDist.current = Math.sqrt(dx * dx + dy * dy)
     }
-    window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && lastTouchDist.current !== null) {
+      e.preventDefault()
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      const factor = dist / lastTouchDist.current
+      lastTouchDist.current = dist
+
+      const container = mapContainerRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+
+      setZoom(prev => {
+        const next = clampZoom(prev * factor)
+        const scale = next / prev
+        setPan(p => ({
+          x: cx - scale * (cx - p.x),
+          y: cy - scale * (cy - p.y),
+        }))
+        return next
+      })
+    }
+  }, [])
+
+  const handleTouchEnd = useCallback(() => {
+    lastTouchDist.current = null
+  }, [])
+
+  // ── Image click for placing pins ────────────────────────────────────────────
+  const getImageCoords = useCallback((clientX: number, clientY: number): { x: number; y: number } | null => {
+    const img = imgRef.current
+    if (!img) return null
+    const rect = img.getBoundingClientRect()
+    const x = ((clientX - rect.left) / rect.width) * 100
+    const y = ((clientY - rect.top) / rect.height) * 100
+    if (x < 0 || x > 100 || y < 0 || y > 100) return null
+    return { x, y }
   }, [])
 
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
     if (!addingPin || !canEdit) return
     e.stopPropagation()
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = ((e.clientX - rect.left) / rect.width) * 100
-    const y = ((e.clientY - rect.top) / rect.height) * 100
-    setPinForm({ x, y, title: '', notes: '', related_article_id: '', visibility: 'players', dsa_date_str: null })
+    const coords = getImageCoords(e.clientX, e.clientY)
+    if (!coords) return
+    setPinForm({ ...coords, title: '', notes: '', related_article_id: '', visibility: 'players', dsa_date_str: null })
     setPinDsaDate(null)
-  }, [addingPin, canEdit])
+  }, [addingPin, canEdit, getImageCoords])
 
+  // ── Drag & Drop pins ────────────────────────────────────────────────────────
+  const updatePinMutation = useMutation({
+    mutationFn: ({ pinId, x, y }: { pinId: string; x: number; y: number }) =>
+      mapService.updatePin(pinId, { x, y }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['map-pins', id] })
+    },
+    onError: () => toast.error('Position konnte nicht gespeichert werden'),
+  })
+
+  const handlePinMouseDown = useCallback((e: React.MouseEvent, pinId: string) => {
+    if (!canEdit || addingPin) return
+    e.preventDefault()
+    e.stopPropagation()
+    draggingPinId.current = pinId
+    dragStartPos.current = { clientX: e.clientX, clientY: e.clientY }
+    isDragging.current = false
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      if (!dragStartPos.current) return
+      const dx = moveEvent.clientX - dragStartPos.current.clientX
+      const dy = moveEvent.clientY - dragStartPos.current.clientY
+      if (!isDragging.current && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        isDragging.current = true
+      }
+      if (!isDragging.current) return
+
+      const coords = getImageCoords(moveEvent.clientX, moveEvent.clientY)
+      if (!coords || !draggingPinId.current) return
+
+      // Optimistically update pin position in DOM
+      const el = document.getElementById(`pin-${draggingPinId.current}`)
+      if (el) {
+        el.style.left = `${coords.x}%`
+        el.style.top = `${coords.y}%`
+      }
+    }
+
+    const onMouseUp = (upEvent: MouseEvent) => {
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+
+      if (isDragging.current && draggingPinId.current) {
+        const coords = getImageCoords(upEvent.clientX, upEvent.clientY)
+        if (coords) {
+          updatePinMutation.mutate({ pinId: draggingPinId.current, x: coords.x, y: coords.y })
+        } else {
+          // Snap back by refetching
+          qc.invalidateQueries({ queryKey: ['map-pins', id] })
+        }
+      } else {
+        // It was a click, not a drag
+        if (draggingPinId.current && !addingPin) {
+          setSelectedPin(prev => prev === draggingPinId.current ? null : draggingPinId.current!)
+        }
+      }
+
+      draggingPinId.current = null
+      dragStartPos.current = null
+      isDragging.current = false
+    }
+
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [canEdit, addingPin, getImageCoords, updatePinMutation, qc, id])
+
+  // Touch drag for pins
+  const handlePinTouchStart = useCallback((e: React.TouchEvent, pinId: string) => {
+    if (!canEdit || addingPin || e.touches.length !== 1) return
+    e.stopPropagation()
+    const touch = e.touches[0]
+    draggingPinId.current = pinId
+    dragStartPos.current = { clientX: touch.clientX, clientY: touch.clientY }
+    isDragging.current = false
+  }, [canEdit, addingPin])
+
+  const handlePinTouchMove = useCallback((e: React.TouchEvent, pinId: string) => {
+    if (draggingPinId.current !== pinId || e.touches.length !== 1) return
+    e.stopPropagation()
+    const touch = e.touches[0]
+    if (!dragStartPos.current) return
+    const dx = touch.clientX - dragStartPos.current.clientX
+    const dy = touch.clientY - dragStartPos.current.clientY
+    if (!isDragging.current && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      isDragging.current = true
+    }
+    if (!isDragging.current) return
+
+    const coords = getImageCoords(touch.clientX, touch.clientY)
+    if (!coords) return
+    const el = document.getElementById(`pin-${pinId}`)
+    if (el) {
+      el.style.left = `${coords.x}%`
+      el.style.top = `${coords.y}%`
+    }
+  }, [getImageCoords])
+
+  const handlePinTouchEnd = useCallback((e: React.TouchEvent, pinId: string) => {
+    if (draggingPinId.current !== pinId) return
+    if (isDragging.current) {
+      const touch = e.changedTouches[0]
+      const coords = getImageCoords(touch.clientX, touch.clientY)
+      if (coords) {
+        updatePinMutation.mutate({ pinId, x: coords.x, y: coords.y })
+      } else {
+        qc.invalidateQueries({ queryKey: ['map-pins', id] })
+      }
+    } else {
+      if (!addingPin) setSelectedPin(prev => prev === pinId ? null : pinId)
+    }
+    draggingPinId.current = null
+    dragStartPos.current = null
+    isDragging.current = false
+  }, [getImageCoords, updatePinMutation, qc, id, addingPin])
+
+  // ── Mutations ───────────────────────────────────────────────────────────────
   const createPinMutation = useMutation({
     mutationFn: (form: PinForm) => mapService.createPin(id!, {
       x: form.x, y: form.y, title: form.title,
@@ -120,7 +314,6 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
   const visiblePins = (pins as PinWithDate[] ?? []).filter(p => isGm || p.visibility !== 'gm')
   const filteredPins = visiblePins.filter(p => !isGm ? true : (showGmPins || p.visibility !== 'gm'))
 
-  // Build chronological path from pins that have a DSA date
   const chronoPins = filteredPins
     .filter(p => p.dsa_date_sort != null)
     .sort((a, b) => (a.dsa_date_sort ?? 0) - (b.dsa_date_sort ?? 0))
@@ -139,6 +332,13 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
         actions={
           <div className="flex gap-2">
             <Link to="/maps" className="btn-ghost"><ArrowLeft size={16} /> Zurück</Link>
+            {/* Zoom controls */}
+            <div className="flex items-center gap-1 bg-surface-700 rounded-lg px-2">
+              <button onClick={() => setZoom(z => clampZoom(z / 1.25))} className="btn-ghost p-1 text-slate-400 text-xs">−</button>
+              <span className="text-xs text-slate-400 w-12 text-center">{Math.round(zoom * 100)}%</span>
+              <button onClick={() => setZoom(z => clampZoom(z * 1.25))} className="btn-ghost p-1 text-slate-400 text-xs">+</button>
+              <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }) }} className="btn-ghost p-1 text-slate-500 text-xs ml-1" title="Reset">↺</button>
+            </div>
             {isGm && (
               <button onClick={() => setShowGmPins(!showGmPins)}
                 className={`btn-ghost ${showGmPins ? 'text-amber-400' : 'text-slate-500'}`}>
@@ -163,28 +363,44 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
       />
 
       <div className="flex-1 overflow-hidden flex min-h-0">
-        {/* Map area */}
-        <div className="flex-1 overflow-auto bg-surface-900 p-4">
+        {/* Map area — overflow hidden, zoom via transform */}
+        <div
+          ref={mapContainerRef}
+          className={`flex-1 overflow-hidden bg-surface-900 relative ${addingPin ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
+          onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          style={{ touchAction: 'none' }}
+        >
+          {/* Transformed map canvas */}
           <div
-            className={`relative inline-block select-none ${addingPin ? 'cursor-crosshair' : ''}`}
-            style={{ lineHeight: 0 }}
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '0 0',
+              display: 'inline-block',
+              position: 'relative',
+              lineHeight: 0,
+              userSelect: 'none',
+            }}
           >
             <img
               ref={imgRef}
               src={imageUrl}
               alt={map.title}
-              className="block max-w-full h-auto"
+              className="block max-w-none"
+              style={{ maxWidth: 'none' }}
               onClick={handleImageClick}
               onLoad={handleImageLoad}
               draggable={false}
             />
 
             {/* SVG overlay for chronological path */}
-            {showPath && chronoPins.length >= 2 && imgSize && (
+            {showPath && chronoPins.length >= 2 && imgRef.current && (
               <svg
                 className="absolute inset-0 pointer-events-none"
-                width={imgSize.w}
-                height={imgSize.h}
+                width={imgRef.current.offsetWidth}
+                height={imgRef.current.offsetHeight}
                 style={{ position: 'absolute', top: 0, left: 0 }}
               >
                 <defs>
@@ -202,15 +418,14 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                 {chronoPins.map((pin, i) => {
                   if (i === 0) return null
                   const prev = chronoPins[i - 1]
-                  const x1 = (prev.x / 100) * imgSize.w
-                  const y1 = (prev.y / 100) * imgSize.h
-                  const x2 = (pin.x / 100) * imgSize.w
-                  const y2 = (pin.y / 100) * imgSize.h
-
-                  // Midpoint for curved path
+                  const iw = imgRef.current!.offsetWidth
+                  const ih = imgRef.current!.offsetHeight
+                  const x1 = (prev.x / 100) * iw
+                  const y1 = (prev.y / 100) * ih
+                  const x2 = (pin.x / 100) * iw
+                  const y2 = (pin.y / 100) * ih
                   const mx = (x1 + x2) / 2
                   const my = (y1 + y2) / 2 - 30
-
                   return (
                     <g key={`path-${prev.id}-${pin.id}`}>
                       <path
@@ -223,7 +438,6 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                         markerEnd="url(#arrowhead)"
                         filter="url(#glow)"
                       />
-                      {/* Step number badge on midpoint */}
                       <circle
                         cx={mx + (x2 - x1) * 0.05}
                         cy={my + (y2 - y1) * 0.05 - 8}
@@ -245,21 +459,17 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                     </g>
                   )
                 })}
-                {/* Order numbers on the pins themselves */}
+                {/* Order numbers */}
                 {chronoPins.map((pin, i) => {
-                  const cx = (pin.x / 100) * imgSize.w
-                  const cy = (pin.y / 100) * imgSize.h - 28
+                  const iw = imgRef.current!.offsetWidth
+                  const ih = imgRef.current!.offsetHeight
+                  // Position the order badge above the pin dot (12px above center)
+                  const cx = (pin.x / 100) * iw
+                  const cy = (pin.y / 100) * ih - 12
                   return (
                     <g key={`order-${pin.id}`}>
                       <circle cx={cx} cy={cy} r="9" fill="#1a35f5" opacity="0.9" />
-                      <text
-                        x={cx} y={cy + 4}
-                        textAnchor="middle"
-                        fontSize="9"
-                        fontWeight="bold"
-                        fill="white"
-                        fontFamily="Inter, system-ui, sans-serif"
-                      >
+                      <text x={cx} y={cy + 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="white" fontFamily="Inter, system-ui, sans-serif">
                         {i + 1}
                       </text>
                     </g>
@@ -268,64 +478,74 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
               </svg>
             )}
 
-            {/* Render pins */}
+            {/* Render pins
+                KEY FIX: The pin anchor point is at (x%, y%) = the exact click position.
+                The circle icon is centered on that point via translate(-50%, -50%).
+                Label and date are appended BELOW the icon, not affecting the anchor. */}
             {filteredPins.map(pin => {
               const typedPin = pin as PinWithDate
               const isChronoPinItem = chronoPins.some(p => p.id === pin.id)
+              const isSelected = selectedPin === pin.id
               return (
-                <button
+                <div
+                  id={`pin-${pin.id}`}
                   key={pin.id}
-                  onClick={e => {
-                    e.stopPropagation()
-                    if (addingPin) return
-                    setSelectedPin(pin.id === selectedPin ? null : pin.id)
-                  }}
+                  onMouseDown={e => handlePinMouseDown(e, pin.id)}
+                  onTouchStart={e => handlePinTouchStart(e, pin.id)}
+                  onTouchMove={e => handlePinTouchMove(e, pin.id)}
+                  onTouchEnd={e => handlePinTouchEnd(e, pin.id)}
                   style={{
                     position: 'absolute',
                     left: `${pin.x}%`,
                     top: `${pin.y}%`,
-                    transform: 'translate(-50%, -100%)',
-                    lineHeight: 'normal',
+                    // Do NOT use transform to offset — we want (left, top) to be the exact anchor
+                    pointerEvents: 'auto',
+                    cursor: canEdit && !addingPin ? 'grab' : 'pointer',
+                    // The content is rendered offset so the dot center aligns with (left, top)
                   }}
-                  className="z-10 group"
                   title={pin.title}
                 >
-                  <div className={`flex flex-col items-center transition-transform ${selectedPin === pin.id ? 'scale-125' : 'hover:scale-110'}`}>
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-lg ${
-                      pin.visibility === 'gm'
-                        ? 'bg-amber-500 border-amber-300'
-                        : isChronoPinItem
-                          ? 'bg-brand-500 border-brand-200 ring-2 ring-brand-400/40'
-                          : 'bg-brand-500 border-brand-300'
-                    }`}>
-                      <MapPin size={12} className="text-white" />
-                    </div>
-                    <div className="text-xs text-white bg-black/75 px-1.5 py-0.5 rounded mt-0.5 whitespace-nowrap max-w-[8rem] truncate">
-                      {pin.title}
-                    </div>
-                    {typedPin.dsa_date_str && (
-                      <div className="text-[10px] text-brand-300 bg-black/70 px-1 py-0.5 rounded mt-0.5 whitespace-nowrap">
-                        ⚔ {formatDsaStr(typedPin.dsa_date_str)}
+                  {/* This inner wrapper shifts content so the dot center sits at the anchor */}
+                  <div style={{ position: 'absolute', transform: 'translate(-50%, -50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    {/* The pin dot — centered exactly at anchor */}
+                    <div className={`transition-transform ${isSelected ? 'scale-125' : 'hover:scale-110'}`}>
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-lg ${
+                        pin.visibility === 'gm'
+                          ? 'bg-amber-500 border-amber-300'
+                          : isChronoPinItem
+                            ? 'bg-brand-500 border-brand-200 ring-2 ring-brand-400/40'
+                            : 'bg-brand-500 border-brand-300'
+                      }`}>
+                        <MapPin size={12} className="text-white" />
                       </div>
-                    )}
+                    </div>
+                    {/* Label and date are appended below — they don't shift the anchor */}
+                    <div className="mt-1 flex flex-col items-center pointer-events-none select-none">
+                      <div className="text-xs text-white bg-black/75 px-1.5 py-0.5 rounded whitespace-nowrap max-w-[8rem] truncate">
+                        {pin.title}
+                      </div>
+                      {typedPin.dsa_date_str && (
+                        <div className="text-[10px] text-brand-300 bg-black/70 px-1 py-0.5 rounded mt-0.5 whitespace-nowrap">
+                          ⚔ {formatDsaStr(typedPin.dsa_date_str)}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </button>
+                </div>
               )
             })}
 
-            {/* Ghost pin while filling form */}
+            {/* Ghost pin while filling form — same anchor logic */}
             {pinForm && (
               <div
                 style={{
                   position: 'absolute',
                   left: `${pinForm.x}%`,
                   top: `${pinForm.y}%`,
-                  transform: 'translate(-50%, -100%)',
-                  lineHeight: 'normal',
                   pointerEvents: 'none',
                 }}
               >
-                <div className="flex flex-col items-center">
+                <div style={{ position: 'absolute', transform: 'translate(-50%, -50%)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <div className="w-6 h-6 rounded-full border-2 bg-emerald-500 border-emerald-300 flex items-center justify-center shadow-lg animate-pulse">
                     <MapPin size={12} className="text-white" />
                   </div>
@@ -413,6 +633,9 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                         <GitCommitHorizontal size={10} /> Station {chronoIndex + 1} von {chronoPins.length}
                       </span>
                     )}
+                    {canEdit && (
+                      <span className="badge bg-surface-600 text-slate-400 text-xs">Ziehen zum Verschieben</span>
+                    )}
                   </div>
                   {pin.dsa_date_str && (() => {
                     const d = dsaDateFromString(pin.dsa_date_str)
@@ -448,7 +671,7 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
         </div>
       )}
 
-      {/* Chronological legend if path is shown */}
+      {/* Chronological legend */}
       {showPath && chronoPins.length >= 2 && (
         <div className="border-t border-surface-600 bg-surface-800/80 px-4 py-2 flex-shrink-0">
           <div className="flex items-center gap-1 flex-wrap">
