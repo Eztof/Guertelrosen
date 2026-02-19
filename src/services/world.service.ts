@@ -35,6 +35,12 @@ export const worldService = {
     return data
   },
 
+  async deleteWorld(worldId: string) {
+    const { error } = await supabase
+      .rpc('delete_world', { p_world_id: worldId })
+    if (error) throw error
+  },
+
   async getWorldMembers(worldId: string) {
     const { data, error } = await supabase
       .from('world_members')
