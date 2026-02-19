@@ -3,13 +3,29 @@ import type { Visibility } from '@/types'
 
 const BUCKET = 'assets'
 
+/**
+ * crypto.randomUUID() is only available in secure contexts (HTTPS / localhost with SSL).
+ * This fallback works everywhere including plain HTTP dev servers.
+ */
+function generateUUID(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // RFC 4122 v4 fallback
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0
+    const v = c === 'x' ? r : (r & 0x3) | 0x8
+    return v.toString(16)
+  })
+}
+
 export const assetService = {
   async uploadFile(worldId: string, file: File, visibility: Visibility = 'players') {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
 
     const ext = file.name.split('.').pop()
-    const path = `${worldId}/${crypto.randomUUID()}.${ext}`
+    const path = `${worldId}/${generateUUID()}.${ext}`
 
     const { error: uploadError } = await supabase.storage
       .from(BUCKET)

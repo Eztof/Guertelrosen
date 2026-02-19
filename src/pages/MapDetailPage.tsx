@@ -83,54 +83,17 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
   // ── Zoom helpers ────────────────────────────────────────────────────────────
   const clampZoom = (z: number) => Math.min(Math.max(z, 0.5), 5)
 
-  // Mousewheel zoom centered on cursor position
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    e.preventDefault()
+  // Attach native (non-passive) wheel listener so preventDefault works
+  useEffect(() => {
     const container = mapContainerRef.current
     if (!container) return
-    const rect = container.getBoundingClientRect()
 
-    // Cursor position relative to container
-    const cx = e.clientX - rect.left
-    const cy = e.clientY - rect.top
-
-    const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
-    setZoom(prev => {
-      const next = clampZoom(prev * factor)
-      const scale = next / prev
-      // Adjust pan so the point under cursor stays fixed
-      setPan(p => ({
-        x: cx - scale * (cx - p.x),
-        y: cy - scale * (cy - p.y),
-      }))
-      return next
-    })
-  }, [])
-
-  // Touch pinch-to-zoom
-  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      lastTouchDist.current = Math.sqrt(dx * dx + dy * dy)
-    }
-  }, [])
-
-  const handleTouchMove = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2 && lastTouchDist.current !== null) {
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault()
-      const dx = e.touches[0].clientX - e.touches[1].clientX
-      const dy = e.touches[0].clientY - e.touches[1].clientY
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      const factor = dist / lastTouchDist.current
-      lastTouchDist.current = dist
-
-      const container = mapContainerRef.current
-      if (!container) return
       const rect = container.getBoundingClientRect()
-      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
-      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
-
+      const cx = e.clientX - rect.left
+      const cy = e.clientY - rect.top
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12
       setZoom(prev => {
         const next = clampZoom(prev * factor)
         const scale = next / prev
@@ -141,6 +104,56 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
         return next
       })
     }
+
+    container.addEventListener('wheel', onWheel, { passive: false })
+    return () => container.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // Touch pinch-to-zoom — also needs non-passive touchmove
+  useEffect(() => {
+    const container = mapContainerRef.current
+    if (!container) return
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && lastTouchDist.current !== null) {
+        e.preventDefault()
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const factor = dist / lastTouchDist.current
+        lastTouchDist.current = dist
+
+        const rect = container.getBoundingClientRect()
+        const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left
+        const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top
+
+        setZoom(prev => {
+          const next = clampZoom(prev * factor)
+          const scale = next / prev
+          setPan(p => ({
+            x: cx - scale * (cx - p.x),
+            y: cy - scale * (cy - p.y),
+          }))
+          return next
+        })
+      }
+    }
+
+    container.addEventListener('touchmove', onTouchMove, { passive: false })
+    return () => container.removeEventListener('touchmove', onTouchMove)
+  }, [])
+
+  const handleTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX
+      const dy = e.touches[0].clientY - e.touches[1].clientY
+      lastTouchDist.current = Math.sqrt(dx * dx + dy * dy)
+    }
+  }, [])
+
+  // Kept as stub — actual logic is in the native listener above
+  const handleTouchMove = useCallback((_e: React.TouchEvent<HTMLDivElement>) => {
+    // handled by native non-passive listener
   }, [])
 
   const handleTouchEnd = useCallback(() => {
@@ -367,7 +380,6 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
         <div
           ref={mapContainerRef}
           className={`flex-1 overflow-hidden bg-surface-900 relative ${addingPin ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
-          onWheel={handleWheel}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
