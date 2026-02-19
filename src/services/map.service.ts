@@ -67,6 +67,8 @@ export const mapService = {
     notes?: string
     related_article_id?: string | null
     visibility?: Visibility
+    dsa_date_str?: string | null
+    dsa_date_sort?: number | null
   }) {
     const { data, error } = await supabase
       .from('map_pins')
@@ -84,6 +86,8 @@ export const mapService = {
     notes: string
     related_article_id: string | null
     visibility: Visibility
+    dsa_date_str: string | null
+    dsa_date_sort: number | null
   }>) {
     const { data, error } = await supabase
       .from('map_pins')

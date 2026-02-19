@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { articleService } from '@/services/article.service'
 import { sessionService } from '@/services/session.service'
-import { BookOpen, Calendar, Map, Plus, Search } from 'lucide-react'
+import { BookOpen, Calendar, Map, Plus, Search, FolderOpen, Users, Clock, Shield, Bell } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { de } from 'date-fns/locale'
 import ArticleTypeBadge from '@/components/ui/ArticleTypeBadge'
@@ -10,7 +10,7 @@ import { useWorld } from '@/hooks/useWorld'
 import PageHeader from '@/components/ui/PageHeader'
 
 export default function DashboardPage({ worldId }: { worldId: string }) {
-  const { canEdit } = useWorld()
+  const { canEdit, isGm } = useWorld()
 
   const { data: articles } = useQuery({
     queryKey: ['articles', worldId, 'recent'],
@@ -28,6 +28,25 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
     },
   })
 
+  // Quick actions: always visible items + edit-only items
+  const quickActions = [
+    ...(canEdit ? [
+      { label: 'Neuer Artikel', to: '/articles/new', icon: <BookOpen size={18} />, color: 'bg-blue-600' },
+      { label: 'Neue Session', to: '/sessions/new', icon: <Calendar size={18} />, color: 'bg-emerald-600' },
+    ] : []),
+    { label: 'Artikel', to: '/articles', icon: <BookOpen size={18} />, color: 'bg-blue-700' },
+    { label: 'Sammlungen', to: '/collections', icon: <FolderOpen size={18} />, color: 'bg-teal-600' },
+    { label: 'Sessions', to: '/sessions', icon: <Calendar size={18} />, color: 'bg-emerald-700' },
+    { label: 'Zeitstrahl', to: '/timeline', icon: <Clock size={18} />, color: 'bg-purple-600' },
+    { label: 'Karten', to: '/maps', icon: <Map size={18} />, color: 'bg-amber-600' },
+    { label: 'Mitglieder', to: '/members', icon: <Users size={18} />, color: 'bg-rose-700' },
+    { label: 'Suche', to: '/search', icon: <Search size={18} />, color: 'bg-violet-600' },
+    { label: 'Posteingang', to: '/inbox', icon: <Bell size={18} />, color: 'bg-slate-600' },
+    ...(isGm ? [
+      { label: 'GM-Panel', to: '/gm', icon: <Shield size={18} />, color: 'bg-amber-700' },
+    ] : []),
+  ]
+
   return (
     <div>
       <PageHeader title="Dashboard"
@@ -39,22 +58,16 @@ export default function DashboardPage({ worldId }: { worldId: string }) {
       />
 
       <div className="p-6 space-y-8">
-        {canEdit && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {[
-              { label: 'Neuer Artikel', to: '/articles/new', icon: <BookOpen size={18} />, color: 'bg-blue-600' },
-              { label: 'Neue Session', to: '/sessions/new', icon: <Calendar size={18} />, color: 'bg-emerald-600' },
-              { label: 'Karten', to: '/maps', icon: <Map size={18} />, color: 'bg-amber-600' },
-              { label: 'Suche', to: '/search', icon: <Search size={18} />, color: 'bg-purple-600' },
-            ].map(a => (
-              <Link key={a.to} to={a.to}
-                className="card p-4 flex items-center gap-3 hover:border-surface-400 transition-colors">
-                <div className={`p-2 rounded-lg ${a.color}`}>{a.icon}</div>
-                <span className="text-sm font-medium text-slate-200">{a.label}</span>
-              </Link>
-            ))}
-          </div>
-        )}
+        {/* Quick Actions */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+          {quickActions.map(a => (
+            <Link key={a.to + a.label} to={a.to}
+              className="card p-4 flex items-center gap-3 hover:border-surface-400 transition-colors">
+              <div className={`p-2 rounded-lg ${a.color} flex-shrink-0`}>{a.icon}</div>
+              <span className="text-sm font-medium text-slate-200 truncate">{a.label}</span>
+            </Link>
+          ))}
+        </div>
 
         <section>
           <div className="flex items-center justify-between mb-3">

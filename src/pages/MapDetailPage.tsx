@@ -5,9 +5,12 @@ import { mapService } from '@/services/map.service'
 import { articleService } from '@/services/article.service'
 import { assetService } from '@/services/asset.service'
 import { useWorld } from '@/hooks/useWorld'
-import { ArrowLeft, Plus, Trash2, X, MapPin, Eye, EyeOff } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, X, MapPin, Eye, EyeOff, GitCommitHorizontal } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { LoadingScreen } from '@/components/ui/Spinner'
+import DsaDatePicker, { DsaDateBadge } from '@/components/ui/DsaDatePicker'
+import type { DsaDate } from '@/lib/dsaCalendar'
+import { dsaDateToString, dsaDateFromString, dsaDateToSortKey, formatDsaDate } from '@/lib/dsaCalendar'
 import toast from 'react-hot-toast'
 import type { Visibility } from '@/types'
 
@@ -18,6 +21,13 @@ interface PinForm {
   notes: string
   related_article_id: string
   visibility: Visibility
+  dsa_date_str: string | null
+}
+
+// Extend pin type to include DSA date fields stored in notes JSON or meta
+type PinWithDate = Awaited<ReturnType<typeof mapService.getPins>>[number] & {
+  dsa_date_str?: string | null
+  dsa_date_sort?: number | null
 }
 
 export default function MapDetailPage({ worldId }: { worldId: string }) {
@@ -29,6 +39,12 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
   const [pinForm, setPinForm] = useState<PinForm | null>(null)
   const [selectedPin, setSelectedPin] = useState<string | null>(null)
   const [showGmPins, setShowGmPins] = useState(true)
+  const [showPath, setShowPath] = useState(true)
+  const [pinDsaDate, setPinDsaDate] = useState<DsaDate | null>(null)
+
+  // For SVG path overlay we need the image dimensions
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [imgSize, setImgSize] = useState<{ w: number; h: number } | null>(null)
 
   const { data: map, isLoading: mapLoading } = useQuery({
     queryKey: ['map', id],
@@ -47,14 +63,30 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
     queryFn: () => articleService.getAllTitles(worldId),
   })
 
-  // Click handler directly on the image — coordinates are always relative to the image
+  const handleImageLoad = () => {
+    if (imgRef.current) {
+      setImgSize({ w: imgRef.current.offsetWidth, h: imgRef.current.offsetHeight })
+    }
+  }
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (imgRef.current) {
+        setImgSize({ w: imgRef.current.offsetWidth, h: imgRef.current.offsetHeight })
+      }
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
   const handleImageClick = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
     if (!addingPin || !canEdit) return
     e.stopPropagation()
     const rect = e.currentTarget.getBoundingClientRect()
     const x = ((e.clientX - rect.left) / rect.width) * 100
     const y = ((e.clientY - rect.top) / rect.height) * 100
-    setPinForm({ x, y, title: '', notes: '', related_article_id: '', visibility: 'players' })
+    setPinForm({ x, y, title: '', notes: '', related_article_id: '', visibility: 'players', dsa_date_str: null })
+    setPinDsaDate(null)
   }, [addingPin, canEdit])
 
   const createPinMutation = useMutation({
@@ -63,11 +95,14 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
       notes: form.notes || undefined,
       related_article_id: form.related_article_id || null,
       visibility: form.visibility,
+      dsa_date_str: form.dsa_date_str || null,
+      dsa_date_sort: form.dsa_date_str ? dsaDateToSortKey(dsaDateFromString(form.dsa_date_str)!) : null,
     }),
     onSuccess: () => {
       toast.success('Pin gesetzt!')
       qc.invalidateQueries({ queryKey: ['map-pins', id] })
       setPinForm(null)
+      setPinDsaDate(null)
       setAddingPin(false)
     },
     onError: (e: Error) => toast.error(e.message),
@@ -82,7 +117,13 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
     },
   })
 
-  const visiblePins = pins?.filter(p => isGm || p.visibility !== 'gm') ?? []
+  const visiblePins = (pins as PinWithDate[] ?? []).filter(p => isGm || p.visibility !== 'gm')
+  const filteredPins = visiblePins.filter(p => !isGm ? true : (showGmPins || p.visibility !== 'gm'))
+
+  // Build chronological path from pins that have a DSA date
+  const chronoPins = filteredPins
+    .filter(p => p.dsa_date_sort != null)
+    .sort((a, b) => (a.dsa_date_sort ?? 0) - (b.dsa_date_sort ?? 0))
 
   if (mapLoading || pinsLoading) return <LoadingScreen />
   if (!map) return <div className="p-8 text-center text-slate-400">Karte nicht gefunden</div>
@@ -104,6 +145,13 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                 {showGmPins ? <Eye size={16} /> : <EyeOff size={16} />} GM-Pins
               </button>
             )}
+            {chronoPins.length >= 2 && (
+              <button onClick={() => setShowPath(!showPath)}
+                className={`btn-ghost ${showPath ? 'text-brand-400' : 'text-slate-500'}`}
+                title="Zeitlichen Pfad anzeigen">
+                <GitCommitHorizontal size={16} /> Pfad
+              </button>
+            )}
             {canEdit && (
               <button onClick={() => { setAddingPin(!addingPin); setPinForm(null) }}
                 className={addingPin ? 'btn-secondary' : 'btn-primary'}>
@@ -115,31 +163,116 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
       />
 
       <div className="flex-1 overflow-hidden flex min-h-0">
-        {/* Map area - scrollable */}
+        {/* Map area */}
         <div className="flex-1 overflow-auto bg-surface-900 p-4">
-          {/*
-            FIX: The pin container wraps tightly around the image using inline-block.
-            Pins use position:absolute with left/top in %, which are always
-            percentage of the wrapper = percentage of the image.
-            Opening/closing the side panel or resizing the window does NOT affect
-            pin positions because they're relative to the image, not the viewport.
-          */}
           <div
             className={`relative inline-block select-none ${addingPin ? 'cursor-crosshair' : ''}`}
             style={{ lineHeight: 0 }}
           >
             <img
+              ref={imgRef}
               src={imageUrl}
               alt={map.title}
               className="block max-w-full h-auto"
               onClick={handleImageClick}
+              onLoad={handleImageLoad}
               draggable={false}
             />
 
-            {/* Render pins absolutely over image */}
-            {visiblePins
-              .filter(p => !isGm ? true : (showGmPins || p.visibility !== 'gm'))
-              .map(pin => (
+            {/* SVG overlay for chronological path */}
+            {showPath && chronoPins.length >= 2 && imgSize && (
+              <svg
+                className="absolute inset-0 pointer-events-none"
+                width={imgSize.w}
+                height={imgSize.h}
+                style={{ position: 'absolute', top: 0, left: 0 }}
+              >
+                <defs>
+                  <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                    <polygon points="0 0, 8 3, 0 6" fill="#3355ff" opacity="0.8" />
+                  </marker>
+                  <filter id="glow">
+                    <feGaussianBlur stdDeviation="2" result="coloredBlur" />
+                    <feMerge>
+                      <feMergeNode in="coloredBlur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                {chronoPins.map((pin, i) => {
+                  if (i === 0) return null
+                  const prev = chronoPins[i - 1]
+                  const x1 = (prev.x / 100) * imgSize.w
+                  const y1 = (prev.y / 100) * imgSize.h
+                  const x2 = (pin.x / 100) * imgSize.w
+                  const y2 = (pin.y / 100) * imgSize.h
+
+                  // Midpoint for curved path
+                  const mx = (x1 + x2) / 2
+                  const my = (y1 + y2) / 2 - 30
+
+                  return (
+                    <g key={`path-${prev.id}-${pin.id}`}>
+                      <path
+                        d={`M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`}
+                        fill="none"
+                        stroke="#3355ff"
+                        strokeWidth="2"
+                        strokeDasharray="6 4"
+                        opacity="0.6"
+                        markerEnd="url(#arrowhead)"
+                        filter="url(#glow)"
+                      />
+                      {/* Step number badge on midpoint */}
+                      <circle
+                        cx={mx + (x2 - x1) * 0.05}
+                        cy={my + (y2 - y1) * 0.05 - 8}
+                        r="9"
+                        fill="#1a35f5"
+                        opacity="0.85"
+                      />
+                      <text
+                        x={mx + (x2 - x1) * 0.05}
+                        y={my + (y2 - y1) * 0.05 - 4}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fontWeight="bold"
+                        fill="white"
+                        fontFamily="Inter, system-ui, sans-serif"
+                      >
+                        {i}
+                      </text>
+                    </g>
+                  )
+                })}
+                {/* Order numbers on the pins themselves */}
+                {chronoPins.map((pin, i) => {
+                  const cx = (pin.x / 100) * imgSize.w
+                  const cy = (pin.y / 100) * imgSize.h - 28
+                  return (
+                    <g key={`order-${pin.id}`}>
+                      <circle cx={cx} cy={cy} r="9" fill="#1a35f5" opacity="0.9" />
+                      <text
+                        x={cx} y={cy + 4}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fontWeight="bold"
+                        fill="white"
+                        fontFamily="Inter, system-ui, sans-serif"
+                      >
+                        {i + 1}
+                      </text>
+                    </g>
+                  )
+                })}
+              </svg>
+            )}
+
+            {/* Render pins */}
+            {filteredPins.map(pin => {
+              const typedPin = pin as PinWithDate
+              const isChronoPinItem = chronoPins.some(p => p.id === pin.id)
+              return (
                 <button
                   key={pin.id}
                   onClick={e => {
@@ -161,16 +294,24 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                     <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shadow-lg ${
                       pin.visibility === 'gm'
                         ? 'bg-amber-500 border-amber-300'
-                        : 'bg-brand-500 border-brand-300'
+                        : isChronoPinItem
+                          ? 'bg-brand-500 border-brand-200 ring-2 ring-brand-400/40'
+                          : 'bg-brand-500 border-brand-300'
                     }`}>
                       <MapPin size={12} className="text-white" />
                     </div>
                     <div className="text-xs text-white bg-black/75 px-1.5 py-0.5 rounded mt-0.5 whitespace-nowrap max-w-[8rem] truncate">
                       {pin.title}
                     </div>
+                    {typedPin.dsa_date_str && (
+                      <div className="text-[10px] text-brand-300 bg-black/70 px-1 py-0.5 rounded mt-0.5 whitespace-nowrap">
+                        ⚔ {formatDsaStr(typedPin.dsa_date_str)}
+                      </div>
+                    )}
                   </div>
                 </button>
-              ))}
+              )
+            })}
 
             {/* Ghost pin while filling form */}
             {pinForm && (
@@ -215,6 +356,21 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                     className="input text-sm resize-none h-20" />
                 </div>
                 <div>
+                  <label className="label text-xs flex items-center gap-1">
+                    <span className="text-brand-400">⚔</span> Aventurisches Datum (optional)
+                  </label>
+                  <DsaDatePicker
+                    value={pinDsaDate}
+                    onChange={d => {
+                      setPinDsaDate(d)
+                      setPinForm(p => p ? { ...p, dsa_date_str: d ? dsaDateToString(d) : null } : null)
+                    }}
+                    showWeekday={false}
+                    placeholder="Datum wählen…"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">Pins mit Datum werden chronologisch verbunden</p>
+                </div>
+                <div>
                   <label className="label text-xs">Verlinkter Artikel</label>
                   <select value={pinForm.related_article_id}
                     onChange={e => setPinForm(p => p ? { ...p, related_article_id: e.target.value } : null)}
@@ -241,15 +397,32 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
             )}
 
             {selectedPin && !pinForm && (() => {
-              const pin = pins?.find(p => p.id === selectedPin)
+              const pin = (pins as PinWithDate[])?.find(p => p.id === selectedPin)
               if (!pin) return null
+              const chronoIndex = chronoPins.findIndex(p => p.id === pin.id)
               return (
                 <div className="p-4 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold text-slate-100">{pin.title}</h3>
                     <button onClick={() => setSelectedPin(null)} className="text-slate-500 hover:text-slate-300"><X size={16} /></button>
                   </div>
-                  {pin.visibility === 'gm' && <span className="badge bg-amber-900/50 text-amber-400 text-xs">Nur GM</span>}
+                  <div className="flex flex-wrap gap-2">
+                    {pin.visibility === 'gm' && <span className="badge bg-amber-900/50 text-amber-400 text-xs">Nur GM</span>}
+                    {chronoIndex >= 0 && (
+                      <span className="badge bg-brand-900/50 text-brand-300 text-xs flex items-center gap-1">
+                        <GitCommitHorizontal size={10} /> Station {chronoIndex + 1} von {chronoPins.length}
+                      </span>
+                    )}
+                  </div>
+                  {pin.dsa_date_str && (() => {
+                    const d = dsaDateFromString(pin.dsa_date_str)
+                    return d ? (
+                      <div className="flex items-center gap-2 text-sm text-slate-300 bg-surface-700 rounded-lg px-3 py-2">
+                        <span className="text-brand-400">⚔</span>
+                        <DsaDateBadge date={d} />
+                      </div>
+                    ) : null
+                  })()}
                   {pin.notes && <p className="text-sm text-slate-300 whitespace-pre-wrap">{pin.notes}</p>}
                   {(pin as any).articles && (
                     <Link to={`/articles/${(pin as any).articles.slug}`} className="text-sm text-brand-400 hover:underline block">
@@ -274,6 +447,34 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
           ✦ Klicke auf die Karte, um einen Pin zu platzieren
         </div>
       )}
+
+      {/* Chronological legend if path is shown */}
+      {showPath && chronoPins.length >= 2 && (
+        <div className="border-t border-surface-600 bg-surface-800/80 px-4 py-2 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-wrap">
+            <GitCommitHorizontal size={12} className="text-brand-400 flex-shrink-0" />
+            <span className="text-xs text-slate-500 mr-2">Zeitlicher Pfad:</span>
+            {chronoPins.map((pin, i) => (
+              <div key={pin.id} className="flex items-center gap-1">
+                {i > 0 && <span className="text-slate-600 text-xs">→</span>}
+                <button
+                  onClick={() => setSelectedPin(pin.id)}
+                  className="text-xs text-brand-300 hover:text-brand-200 flex items-center gap-1"
+                >
+                  <span className="w-4 h-4 rounded-full bg-brand-600 text-white text-[9px] flex items-center justify-center font-bold">{i + 1}</span>
+                  <span className="truncate max-w-[80px]">{pin.title}</span>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
+}
+
+function formatDsaStr(str: string): string {
+  const d = dsaDateFromString(str)
+  if (!d) return str
+  return formatDsaDate(d, { short: true })
 }
