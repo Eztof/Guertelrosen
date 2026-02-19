@@ -240,17 +240,52 @@ export default function ArticleEditPage({ worldId }: { worldId: string }) {
         setAliases(meta.aliases ?? '')
         setLore(meta.lore ?? '')
         setArticleLinks(meta.articleLinks ?? [])
+      } else {
+        // Explicitly reset meta fields if no __meta exists
+        setCoverImage('')
+        setGallery([])
+        setHandouts([])
+        setCustomFields([])
+        setAliases('')
+        setLore('')
+        setArticleLinks([])
       }
     }
   }, [article])
 
   useEffect(() => { if (!canEdit) navigate(-1) }, [canEdit])
 
+  /**
+   * FIX: Always explicitly set __meta on the content_json, even when empty.
+   * This ensures that when a user removes a cover image or gallery images,
+   * the empty state is persisted (overwriting the old __meta).
+   * 
+   * We strip __meta from the editor content first, then re-add it from state.
+   */
   const buildPayloadContentJson = () => {
-    const base = contentJson ?? {}
-    const hasMeta = coverImage || gallery.length || handouts.length || customFields.length || aliases || lore || articleLinks.length
-    if (!hasMeta) return base
-    return { ...base, __meta: { coverImage, gallery, handouts, customFields, aliases, lore, articleLinks } }
+    // Start from editor content, strip any existing __meta
+    const base = { ...(contentJson ?? {}) } as any
+    delete base.__meta
+
+    // Build current meta from component state
+    const meta: any = {}
+    if (coverImage) meta.coverImage = coverImage
+    if (gallery.length > 0) meta.gallery = gallery
+    if (handouts.length > 0) meta.handouts = handouts
+    if (customFields.length > 0) meta.customFields = customFields
+    if (aliases) meta.aliases = aliases
+    if (lore) meta.lore = lore
+    if (articleLinks.length > 0) meta.articleLinks = articleLinks
+
+    // Always include __meta (even if empty) when the article previously had meta,
+    // so that removed images/data are actually cleared.
+    // We include it whenever advanced options have been opened or meta existed before.
+    const hadMetaBefore = !!(article?.content_json as any)?.__meta
+    if (Object.keys(meta).length > 0 || hadMetaBefore) {
+      base.__meta = meta
+    }
+
+    return base
   }
 
   const saveMutation = useMutation({
@@ -271,6 +306,7 @@ export default function ArticleEditPage({ worldId }: { worldId: string }) {
     onSuccess: (data) => {
       toast.success(isNew ? 'Artikel erstellt!' : 'Gespeichert!')
       qc.invalidateQueries({ queryKey: ['articles', worldId] })
+      qc.invalidateQueries({ queryKey: ['article', worldId, data.slug] })
       setSaved(true)
       if (isNew) navigate(`/articles/${data.slug}`)
     },

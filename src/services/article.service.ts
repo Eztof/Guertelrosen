@@ -60,7 +60,7 @@ export const articleService = {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) throw new Error('Not authenticated')
 
-    // Generate unique slug
+    // Generate unique slug – use maybeSingle() to avoid 406 when no match
     let slug = generateSlug(input.title)
     let suffix = 1
     while (true) {
@@ -69,7 +69,7 @@ export const articleService = {
         .select('id')
         .eq('world_id', worldId)
         .eq('slug', slug)
-        .single()
+        .maybeSingle()
       if (!existing) break
       slug = generateSlug(input.title, suffix++)
     }
@@ -193,12 +193,22 @@ export const articleService = {
   },
 
   async getVersions(articleId: string) {
+    // Use explicit FK hint for the profiles join via created_by
     const { data, error } = await supabase
       .from('article_versions')
-      .select('*, profiles(display_name)')
+      .select('*, profiles!article_versions_created_by_fkey(display_name)')
       .eq('article_id', articleId)
       .order('version_no', { ascending: false })
-    if (error) throw error
+    if (error) {
+      // Fallback: fetch without profile join if FK hint fails
+      const { data: fallback, error: err2 } = await supabase
+        .from('article_versions')
+        .select('*')
+        .eq('article_id', articleId)
+        .order('version_no', { ascending: false })
+      if (err2) throw err2
+      return fallback
+    }
     return data
   },
 

@@ -19,10 +19,27 @@ import TableHeader from '@tiptap/extension-table-header'
 import TableCell from '@tiptap/extension-table-cell'
 import { useState } from 'react'
 
+/**
+ * Check if content_json is a valid ProseMirror document for TipTap.
+ * Returns sanitized content or null.
+ */
+function sanitizeContent(content: object | null | undefined): object | null {
+  if (!content) return null
+  if (typeof content !== 'object') return null
+  // An empty object {} is not valid ProseMirror
+  if (Object.keys(content).length === 0) return null
+  // Must have 'type' to be a valid node
+  if (!(content as any).type) return null
+  return content
+}
+
 function ReadonlyEditor({ content }: { content: object }) {
   // Strip __meta from display content
   const displayContent = { ...(content as any) }
   delete displayContent.__meta
+
+  // Validate before passing to TipTap
+  const safeContent = sanitizeContent(displayContent)
 
   const editor = useEditor({
     extensions: [
@@ -31,7 +48,7 @@ function ReadonlyEditor({ content }: { content: object }) {
       LinkExtension.configure({ openOnClick: true }),
       Table, TableRow, TableHeader, TableCell,
     ],
-    content: displayContent,
+    content: safeContent ?? undefined,
     editable: false,
   })
   return <EditorContent editor={editor} />
@@ -111,6 +128,18 @@ export default function ArticleViewPage({ worldId }: { worldId: string }) {
   // Extract meta
   const meta = (article.content_json as any)?.__meta ?? {}
   const { coverImage, gallery, handouts, customFields, aliases, lore, articleLinks } = meta
+
+  // Check if content_json has actual editor content (not just __meta)
+  const hasEditorContent = (() => {
+    if (!article.content_json) return false
+    const cj = article.content_json as any
+    // If it only has __meta and nothing else, no editor content
+    const keys = Object.keys(cj).filter(k => k !== '__meta')
+    if (keys.length === 0) return false
+    // Must be a valid ProseMirror doc
+    if (!cj.type) return false
+    return true
+  })()
 
   return (
     <div>
@@ -199,7 +228,7 @@ export default function ArticleViewPage({ worldId }: { worldId: string }) {
 
           {/* Content */}
           <div className="card p-6 mb-6">
-            {article.content_json ? (
+            {hasEditorContent ? (
               <ReadonlyEditor content={article.content_json as object} />
             ) : (
               <p className="text-slate-400 italic">Kein Inhalt vorhanden.</p>

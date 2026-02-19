@@ -26,6 +26,19 @@ interface RichEditorProps {
   articleTitles?: { title: string; slug: string }[]
 }
 
+/**
+ * Check if a content_json value is a valid TipTap/ProseMirror document.
+ * Returns the content if valid, or undefined if empty/invalid.
+ */
+function sanitizeContent(content: object | null | undefined): object | undefined {
+  if (!content) return undefined
+  // An empty object {} is not a valid ProseMirror doc
+  if (typeof content === 'object' && Object.keys(content).length === 0) return undefined
+  // Must have a 'type' property to be a valid ProseMirror node
+  if (!(content as any).type) return undefined
+  return content
+}
+
 export default function RichEditor({
   content, onChange, readonly = false, placeholder = 'Beginne zu schreiben…',
   worldId, articleTitles = []
@@ -39,6 +52,8 @@ export default function RichEditor({
   const [internalLinkQuery, setInternalLinkQuery] = useState('')
   const [showInternalPicker, setShowInternalPicker] = useState(false)
 
+  const safeContent = sanitizeContent(content)
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -50,7 +65,7 @@ export default function RichEditor({
       TableHeader,
       TableCell,
     ],
-    content: content ?? undefined,
+    content: safeContent,
     editable: !readonly,
     onUpdate: ({ editor }) => {
       if (onChange) {
@@ -62,8 +77,8 @@ export default function RichEditor({
   })
 
   useEffect(() => {
-    if (editor && content && JSON.stringify(editor.getJSON()) !== JSON.stringify(content)) {
-      editor.commands.setContent(content as object)
+    if (editor && safeContent && JSON.stringify(editor.getJSON()) !== JSON.stringify(safeContent)) {
+      editor.commands.setContent(safeContent as object)
     }
   }, []) // only on mount
 
