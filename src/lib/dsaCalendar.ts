@@ -58,11 +58,12 @@ export function parseDsaDate(str: string): DsaDate | null {
     const day = parseInt(fullMatch[1])
     const monthStr = fullMatch[2].trim()
     const year = parseInt(fullMatch[3])
-    const month = DSA_MONTHS.findIndex(m => 
+    const monthRaw = DSA_MONTHS.findIndex(m => 
       m.name.toLowerCase() === monthStr.toLowerCase() ||
       m.short.toLowerCase() === monthStr.toLowerCase()
-    ) as DsaMonthIndex
-    if (month === -1) return null
+    )
+    if (monthRaw === -1) return null
+    const month = monthRaw as DsaMonthIndex
     const maxDay = DSA_MONTHS[month].days
     if (day < 1 || day > maxDay) return null
     return { day, month, year }
