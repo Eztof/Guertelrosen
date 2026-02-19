@@ -5,7 +5,7 @@ const TYPE_CONFIG: Record<ArticleType, { label: string; color: string }> = {
   npc: { label: 'NPC', color: 'bg-blue-900/60 text-blue-300' },
   faction: { label: 'Fraktion', color: 'bg-purple-900/60 text-purple-300' },
   item: { label: 'Gegenstand', color: 'bg-yellow-900/60 text-yellow-300' },
-  deity: { label: 'Gottheit', color: 'bg-amber-900/60 text-amber-300' },
+  deity: { label: 'Gottheiten/Dämonen', color: 'bg-amber-900/60 text-amber-300' },
   plot: { label: 'Abenteuer', color: 'bg-red-900/60 text-red-300' },
   rule: { label: 'Regel', color: 'bg-slate-700 text-slate-300' },
   handout: { label: 'Handout', color: 'bg-teal-900/60 text-teal-300' },

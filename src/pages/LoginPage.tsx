@@ -35,7 +35,7 @@ export default function LoginPage() {
     setLoading(true)
     try {
       await authService.signUp(email, password, displayName)
-      toast.success('Registrierung erfolgreich! Bitte E-Mail bestätigen.')
+      toast.success('Konto erstellt! Du kannst dich jetzt anmelden.')
       setMode('login')
     } catch (e: unknown) {
       toast.error((e as Error).message)
@@ -52,6 +52,7 @@ export default function LoginPage() {
             <Sword size={28} className="text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-100">7G Wiki</h1>
+          <p className="text-sm text-slate-500 mt-1">Sieben Gezeichnete</p>
         </div>
 
         <div className="card p-6">
@@ -69,7 +70,7 @@ export default function LoginPage() {
               <div>
                 <label className="label">E-Mail</label>
                 <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-                  className="input" required />
+                  className="input" required autoFocus />
               </div>
               <div>
                 <label className="label">Passwort</label>
@@ -87,7 +88,7 @@ export default function LoginPage() {
               <div>
                 <label className="label">Anzeigename</label>
                 <input value={displayName} onChange={e => setDisplayName(e.target.value)}
-                  className="input" required />
+                  className="input" required autoFocus />
               </div>
               <div>
                 <label className="label">E-Mail</label>

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { articleService } from '@/services/article.service'
+import { supabase } from '@/lib/supabase'
 import { Search, BookOpen } from 'lucide-react'
 import ArticleTypeBadge from '@/components/ui/ArticleTypeBadge'
 import PageHeader from '@/components/ui/PageHeader'
@@ -9,14 +9,21 @@ import type { ArticleType } from '@/types'
 import { useDebounce } from '@/hooks/useDebounce'
 import { useQuery } from '@tanstack/react-query'
 
+async function searchArticlesFuzzy(worldId: string, query: string) {
+  const { data, error } = await supabase
+    .rpc('search_articles_fuzzy', { p_world_id: worldId, p_query: query })
+  if (error) throw error
+  return data ?? []
+}
+
 export default function SearchPage({ worldId }: { worldId: string }) {
   const [query, setQuery] = useState('')
-  const debouncedQuery = useDebounce(query, 400)
+  const debouncedQuery = useDebounce(query, 300)
 
   const { data: results, isLoading } = useQuery({
-    queryKey: ['search', worldId, debouncedQuery],
-    queryFn: () => articleService.searchArticles(worldId, debouncedQuery),
-    enabled: debouncedQuery.length >= 2,
+    queryKey: ['search-fuzzy', worldId, debouncedQuery],
+    queryFn: () => searchArticlesFuzzy(worldId, debouncedQuery),
+    enabled: debouncedQuery.length >= 1,
   })
 
   return (
@@ -31,7 +38,7 @@ export default function SearchPage({ worldId }: { worldId: string }) {
             value={query}
             onChange={e => setQuery(e.target.value)}
             className="input pl-10 text-lg"
-            placeholder="Artikelname, Inhalt, Tags durchsuchen…"
+            placeholder="Artikel suchen…"
           />
           {isLoading && (
             <div className="absolute right-3 top-1/2 -translate-y-1/2">
@@ -40,11 +47,13 @@ export default function SearchPage({ worldId }: { worldId: string }) {
           )}
         </div>
 
-        {debouncedQuery.length >= 2 && (
+        {debouncedQuery.length >= 1 && (
           <>
             {results && results.length > 0 ? (
               <div className="space-y-2">
-                <p className="text-sm text-slate-400 mb-4">{results.length} Ergebnis{results.length !== 1 ? 'se' : ''}</p>
+                <p className="text-sm text-slate-400 mb-4">
+                  {results.length} Ergebnis{results.length !== 1 ? 'se' : ''}
+                </p>
                 {results.map((r: any) => (
                   <Link key={r.id} to={`/articles/${r.slug}`}
                     className="card p-4 flex items-start gap-3 hover:border-surface-400 transition-colors">
@@ -67,8 +76,8 @@ export default function SearchPage({ worldId }: { worldId: string }) {
           </>
         )}
 
-        {debouncedQuery.length < 2 && (
-          <p className="text-center text-slate-500 text-sm mt-8">Gib mindestens 2 Zeichen ein</p>
+        {debouncedQuery.length === 0 && (
+          <p className="text-center text-slate-500 text-sm mt-8">Tippe, um zu suchen</p>
         )}
       </div>
     </div>

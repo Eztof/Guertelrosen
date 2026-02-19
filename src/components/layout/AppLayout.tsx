@@ -3,13 +3,14 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   BookOpen, Map, Calendar, Users, FolderOpen, Search,
   LogOut, User, ChevronLeft, Menu, Globe, Shield,
-  Home, Plus
+  Home, Plus, Bell, Inbox
 } from 'lucide-react'
 import { useAuth } from '@/hooks/useAuth'
 import { useWorld } from '@/hooks/useWorld'
 import { useQuery } from '@tanstack/react-query'
 import { worldService } from '@/services/world.service'
 import { collectionService } from '@/services/collection.service'
+import { notificationService } from '@/services/notification.service'
 
 const WORLD_KEY = '7g_world_id'
 
@@ -19,21 +20,28 @@ interface NavItem {
   label: string
 }
 
-const navItems: NavItem[] = [
-  { to: '/', icon: <Home size={18} />, label: 'Dashboard' },
-  { to: '/articles', icon: <BookOpen size={18} />, label: 'Artikel' },
-  { to: '/collections', icon: <FolderOpen size={18} />, label: 'Sammlungen' },
-  { to: '/sessions', icon: <Calendar size={18} />, label: 'Sessions' },
-  { to: '/maps', icon: <Map size={18} />, label: 'Karten' },
-  { to: '/members', icon: <Users size={18} />, label: 'Mitglieder' },
-  { to: '/search', icon: <Search size={18} />, label: 'Suche' },
-]
+function useNavItems(isGm: boolean): NavItem[] {
+  const base: NavItem[] = [
+    { to: '/', icon: <Home size={18} />, label: 'Dashboard' },
+    { to: '/articles', icon: <BookOpen size={18} />, label: 'Artikel' },
+    { to: '/collections', icon: <FolderOpen size={18} />, label: 'Sammlungen' },
+    { to: '/sessions', icon: <Calendar size={18} />, label: 'Sessions' },
+    { to: '/maps', icon: <Map size={18} />, label: 'Karten' },
+    { to: '/members', icon: <Users size={18} />, label: 'Mitglieder' },
+    { to: '/search', icon: <Search size={18} />, label: 'Suche' },
+  ]
+  if (isGm) {
+    base.push({ to: '/gm', icon: <Shield size={18} />, label: 'GM-Panel' })
+  }
+  return base
+}
 
 function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed: boolean; onToggle: () => void }) {
   const location = useLocation()
   const navigate = useNavigate()
   const { user, signOut } = useAuth()
   const { isGm, canEdit } = useWorld()
+  const navItems = useNavItems(isGm)
 
   const { data: world } = useQuery({
     queryKey: ['world', worldId],
@@ -43,6 +51,12 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
   const { data: collections } = useQuery({
     queryKey: ['collections', worldId],
     queryFn: () => collectionService.listCollections(worldId),
+  })
+
+  const { data: unreadCount } = useQuery({
+    queryKey: ['unread-count'],
+    queryFn: () => notificationService.getUnreadCount(),
+    refetchInterval: 30000,
   })
 
   const handleSwitchWorld = () => {
@@ -68,6 +82,16 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
             {item.icon}
           </Link>
         ))}
+        <Link to="/inbox"
+          className={`relative p-2 rounded-lg transition-colors ${isActive('/inbox') ? 'bg-brand-600 text-white' : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'}`}
+          title="Posteingang">
+          <Bell size={18} />
+          {(unreadCount ?? 0) > 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-[10px] flex items-center justify-center text-white font-bold">
+              {unreadCount}
+            </span>
+          )}
+        </Link>
       </div>
     )
   }
@@ -101,6 +125,27 @@ function Sidebar({ worldId, collapsed, onToggle }: { worldId: string; collapsed:
             {item.label}
           </Link>
         ))}
+
+        {/* Inbox with badge */}
+        <Link to="/inbox"
+          className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+            isActive('/inbox')
+              ? 'bg-brand-600 text-white'
+              : 'text-slate-400 hover:bg-surface-700 hover:text-slate-200'
+          }`}>
+          <div className="relative">
+            <Bell size={18} />
+            {(unreadCount ?? 0) > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 bg-red-500 rounded-full text-[9px] flex items-center justify-center text-white font-bold">
+                {unreadCount}
+              </span>
+            )}
+          </div>
+          Posteingang
+          {(unreadCount ?? 0) > 0 && (
+            <span className="ml-auto badge bg-red-500 text-white text-xs">{unreadCount}</span>
+          )}
+        </Link>
 
         {collections && collections.length > 0 && (
           <div className="pt-3 mt-3 border-t border-surface-600">

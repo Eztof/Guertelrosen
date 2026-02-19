@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { worldService } from '@/services/world.service'
-import { Globe, Plus, ArrowRight } from 'lucide-react'
+import { useAuth } from '@/hooks/useAuth'
+import { Globe, Plus, ArrowRight, LogOut } from 'lucide-react'
 import toast from 'react-hot-toast'
 import Modal from '@/components/ui/Modal'
 import { LoadingScreen } from '@/components/ui/Spinner'
@@ -12,6 +13,7 @@ const WORLD_KEY = '7g_world_id'
 export default function WorldSelectPage() {
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { user, signOut } = useAuth()
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -37,6 +39,11 @@ export default function WorldSelectPage() {
     navigate('/')
   }
 
+  const handleSignOut = async () => {
+    await signOut()
+    navigate('/login')
+  }
+
   if (isLoading) return <LoadingScreen />
 
   return (
@@ -44,6 +51,9 @@ export default function WorldSelectPage() {
       <div className="w-full max-w-xl">
         <div className="text-center mb-6">
           <h1 className="text-xl font-bold text-slate-100">Welt auswählen</h1>
+          {user && (
+            <p className="text-sm text-slate-500 mt-1">{user.email}</p>
+          )}
         </div>
 
         <div className="grid gap-3 mb-6">
@@ -59,6 +69,9 @@ export default function WorldSelectPage() {
                   <div>
                     <div className="font-semibold text-slate-100">{w.name}</div>
                     {w.description && <div className="text-sm text-slate-400">{w.description}</div>}
+                    <div className="text-xs text-slate-500 mt-0.5">
+                      {role === 'gm' ? '⚔️ GM' : role === 'editor' ? '✏️ Editor' : '👤 Spieler'}
+                    </div>
                   </div>
                 </div>
                 <ArrowRight size={18} className="text-slate-500 group-hover:text-brand-400 transition-colors" />
@@ -67,14 +80,19 @@ export default function WorldSelectPage() {
           })}
           {(!worlds || worlds.length === 0) && (
             <div className="card p-6 text-center text-slate-400 text-sm">
-              Noch keine Welten vorhanden.
+              Noch keine Welten vorhanden. Erstelle eine oder warte auf eine Einladung!
             </div>
           )}
         </div>
 
-        <button onClick={() => setShowCreate(true)} className="btn-primary w-full justify-center">
-          <Plus size={18} /> Neue Welt
-        </button>
+        <div className="space-y-3">
+          <button onClick={() => setShowCreate(true)} className="btn-primary w-full justify-center">
+            <Plus size={18} /> Neue Welt erstellen
+          </button>
+          <button onClick={handleSignOut} className="btn-ghost w-full justify-center text-red-400 hover:bg-red-900/20">
+            <LogOut size={18} /> Abmelden
+          </button>
+        </div>
       </div>
 
       <Modal title="Neue Welt" open={showCreate} onClose={() => setShowCreate(false)}>

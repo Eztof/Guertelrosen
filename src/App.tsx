@@ -17,6 +17,8 @@ import CollectionsPage from '@/pages/CollectionsPage'
 import MembersPage from '@/pages/MembersPage'
 import SearchPage from '@/pages/SearchPage'
 import ProfilePage from '@/pages/ProfilePage'
+import GmPanelPage from '@/pages/GmPanelPage'
+import InboxPage from '@/pages/InboxPage'
 
 // Layout
 import AppLayout from '@/components/layout/AppLayout'
@@ -52,6 +54,8 @@ function WorldRoutes() {
           <Route path="/members" element={<MembersPage worldId={worldId} />} />
           <Route path="/search" element={<SearchPage worldId={worldId} />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/gm" element={<GmPanelPage worldId={worldId} />} />
+          <Route path="/inbox" element={<InboxPage />} />
         </Routes>
       </AppLayout>
     </WorldProvider>
