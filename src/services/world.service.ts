@@ -38,7 +38,7 @@ export const worldService = {
   async getWorldMembers(worldId: string) {
     const { data, error } = await supabase
       .from('world_members')
-      .select('*, profiles(display_name, avatar_url)')
+      .select('*, profiles!world_members_user_id_profiles_fkey(display_name, avatar_url)')
       .eq('world_id', worldId)
     if (error) throw error
     return data

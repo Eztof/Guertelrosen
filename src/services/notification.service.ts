@@ -60,10 +60,14 @@ export const notificationService = {
   },
 
   async listPendingInvitations(): Promise<WorldInvitation[]> {
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return []
+
     const { data, error } = await supabase
       .from('world_invitations')
-      .select('*, worlds(name, description), profiles!world_invitations_invited_by_fkey(display_name)')
+      .select('*, worlds(name, description), profiles!world_invitations_invited_by_profiles_fkey(display_name)')
       .eq('status', 'pending')
+      .eq('invited_user_id', user.id)
     if (error) throw error
     return data ?? []
   },
@@ -77,7 +81,6 @@ export const notificationService = {
     if (error) throw error
   },
 
-  // GM: invite user by looking up their profile by display_name or email
   async searchUsers(query: string) {
     const { data, error } = await supabase
       .from('profiles')
@@ -98,11 +101,10 @@ export const notificationService = {
     if (error) throw error
   },
 
-  // GM: get all invitations for a world
   async listWorldInvitations(worldId: string) {
     const { data, error } = await supabase
       .from('world_invitations')
-      .select('*, profiles!world_invitations_invited_user_id_fkey(display_name, avatar_url)')
+      .select('*, profiles!world_invitations_invited_user_id_profiles_fkey(display_name, avatar_url)')
       .eq('world_id', worldId)
       .order('created_at', { ascending: false })
     if (error) throw error
