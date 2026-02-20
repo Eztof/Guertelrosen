@@ -10,6 +10,33 @@ import { LoadingScreen } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import toast from 'react-hot-toast'
 
+/**
+ * Supabase Storage Image Transformation:
+ * Append ?width=400&quality=60 for small previews.
+ * This only works if the image is served from a public Supabase storage URL.
+ * Falls back to the original if the image fails to load.
+ */
+function getThumbnailUrl(originalUrl: string, width = 400, quality = 60): string {
+  try {
+    const url = new URL(originalUrl)
+    // Supabase image transformation requires /render/image/public/ in the path
+    // Standard storage URL: /storage/v1/object/public/...
+    // Transformed URL:       /storage/v1/render/image/public/...
+    if (url.pathname.includes('/storage/v1/object/public/')) {
+      url.pathname = url.pathname.replace(
+        '/storage/v1/object/public/',
+        '/storage/v1/render/image/public/'
+      )
+      url.searchParams.set('width', String(width))
+      url.searchParams.set('quality', String(quality))
+      return url.toString()
+    }
+  } catch {
+    // ignore, fall through
+  }
+  return originalUrl
+}
+
 export default function MapsPage({ worldId }: { worldId: string }) {
   const { canEdit } = useWorld()
   const qc = useQueryClient()
@@ -57,25 +84,36 @@ export default function MapsPage({ worldId }: { worldId: string }) {
       <div className="p-6">
         {maps && maps.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {maps.map(map => (
-              <Link key={map.id} to={`/maps/${map.id}`}
-                className="card overflow-hidden hover:border-surface-400 transition-colors group">
-                <div className="aspect-video bg-surface-700 overflow-hidden">
-                  <img
-                    src={assetService.getPublicUrl(map.image_path)}
-                    alt={map.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    onError={e => { (e.target as HTMLImageElement).src = '' }}
-                  />
-                </div>
-                <div className="p-3">
-                  <div className="font-medium text-slate-100">{map.title}</div>
-                  {map.visibility === 'gm' && (
-                    <span className="badge bg-red-900/50 text-red-400 text-xs mt-1">Nur GM</span>
-                  )}
-                </div>
-              </Link>
-            ))}
+            {maps.map(map => {
+              const originalUrl = assetService.getPublicUrl(map.image_path)
+              const thumbUrl = getThumbnailUrl(originalUrl, 400, 65)
+              return (
+                <Link key={map.id} to={`/maps/${map.id}`}
+                  className="card overflow-hidden hover:border-surface-400 transition-colors group">
+                  <div className="aspect-video bg-surface-700 overflow-hidden relative">
+                    <img
+                      src={thumbUrl}
+                      alt={map.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                      loading="lazy"
+                      onError={e => {
+                        // Fallback to original if thumbnail transform not available
+                        const img = e.target as HTMLImageElement
+                        if (img.src !== originalUrl) {
+                          img.src = originalUrl
+                        }
+                      }}
+                    />
+                  </div>
+                  <div className="p-3">
+                    <div className="font-medium text-slate-100">{map.title}</div>
+                    {map.visibility === 'gm' && (
+                      <span className="badge bg-red-900/50 text-red-400 text-xs mt-1">Nur GM</span>
+                    )}
+                  </div>
+                </Link>
+              )
+            })}
           </div>
         ) : (
           <div className="text-center py-16 text-slate-400">
