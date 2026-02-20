@@ -5,7 +5,7 @@ import { mapService } from '@/services/map.service'
 import { articleService } from '@/services/article.service'
 import { assetService } from '@/services/asset.service'
 import { useWorld } from '@/hooks/useWorld'
-import { ArrowLeft, Plus, Trash2, X, MapPin, Eye, EyeOff, GitCommitHorizontal } from 'lucide-react'
+import { ArrowLeft, Plus, Trash2, X, MapPin, Eye, EyeOff, GitCommitHorizontal, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import { LoadingScreen } from '@/components/ui/Spinner'
 import DsaDatePicker, { DsaDateBadge } from '@/components/ui/DsaDatePicker'
@@ -29,20 +29,9 @@ type PinWithDate = Awaited<ReturnType<typeof mapService.getPins>>[number] & {
   dsa_date_sort?: number | null
 }
 
-// ── Zoom/Pan state lives in a ref to avoid re-render overhead ────────────────
-interface Transform {
-  x: number   // pan offset in pixels
-  y: number
-  scale: number
-}
-
-const MIN_SCALE = 0.25
-const MAX_SCALE = 8
-const ZOOM_FACTOR = 1.12
-
-function clampScale(s: number) {
-  return Math.min(Math.max(s, MIN_SCALE), MAX_SCALE)
-}
+const MIN_SCALE = 0.1
+const MAX_SCALE = 10
+const ZOOM_FACTOR = 1.15
 
 export default function MapDetailPage({ worldId }: { worldId: string }) {
   const { id } = useParams<{ id: string }>()
@@ -56,36 +45,42 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
   const [showPath, setShowPath] = useState(true)
   const [pinDsaDate, setPinDsaDate] = useState<DsaDate | null>(null)
 
-  // ── Transform state ──────────────────────────────────────────────────────
-  // We keep transform in state (for re-rendering) but use a ref to avoid
-  // stale closures in event handlers.
-  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 })
-  const transformRef = useRef<Transform>({ x: 0, y: 0, scale: 1 })
+  // Transform state - single source of truth
+  const [scale, setScale] = useState(1)
+  const [tx, setTx] = useState(0)
+  const [ty, setTy] = useState(0)
 
-  const applyTransform = useCallback((t: Transform) => {
-    transformRef.current = t
-    setTransform(t)
+  // Use refs so event handlers always get current values without re-registering
+  const scaleRef = useRef(1)
+  const txRef = useRef(0)
+  const tyRef = useRef(0)
+
+  const updateTransform = useCallback((newScale: number, newTx: number, newTy: number) => {
+    scaleRef.current = newScale
+    txRef.current = newTx
+    tyRef.current = newTy
+    setScale(newScale)
+    setTx(newTx)
+    setTy(newTy)
   }, [])
 
-  // ── Refs ──────────────────────────────────────────────────────────────────
-  const outerRef = useRef<HTMLDivElement>(null)   // the overflow:hidden viewport
+  const viewportRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgLoaded, setImgLoaded] = useState(false)
 
-  // pan state
+  // Pan state
   const isPanning = useRef(false)
-  const panStart = useRef({ clientX: 0, clientY: 0, tx: 0, ty: 0 })
+  const panStart = useRef({ x: 0, y: 0, tx: 0, ty: 0 })
 
-  // touch pinch
+  // Touch pinch
   const lastPinchDist = useRef<number | null>(null)
-  const lastPinchCenter = useRef<{ x: number; y: number } | null>(null)
+  const lastPinchMid = useRef<{ x: number; y: number } | null>(null)
 
-  // drag pin
+  // Pin drag
   const draggingPinId = useRef<string | null>(null)
-  const dragDidMove = useRef(false)
-  const dragAnchor = useRef<{ clientX: number; clientY: number } | null>(null)
+  const dragMoved = useRef(false)
+  const dragStart = useRef<{ x: number; y: number } | null>(null)
 
-  // ── Queries ───────────────────────────────────────────────────────────────
   const { data: map, isLoading: mapLoading } = useQuery({
     queryKey: ['map', id],
     queryFn: () => mapService.getMap(id!),
@@ -103,178 +98,146 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
     queryFn: () => articleService.getAllTitles(worldId),
   })
 
-  // ── Wheel zoom (non-passive, mouse-centered) ──────────────────────────────
+  // ── WHEEL ZOOM (mouse-centered) ───────────────────────────────────────────
   useEffect(() => {
-    const el = outerRef.current
+    const el = viewportRef.current
     if (!el) return
 
-    const onWheel = (e: WheelEvent) => {
+    const handleWheel = (e: WheelEvent) => {
       e.preventDefault()
+      e.stopPropagation()
+
       const rect = el.getBoundingClientRect()
-      // Mouse position relative to the viewport div
-      const mx = e.clientX - rect.left
-      const my = e.clientY - rect.top
+      const mouseX = e.clientX - rect.left
+      const mouseY = e.clientY - rect.top
 
-      const t = transformRef.current
-      const factor = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR
-      const newScale = clampScale(t.scale * factor)
+      const currentScale = scaleRef.current
+      const currentTx = txRef.current
+      const currentTy = tyRef.current
 
-      // Zoom toward mouse: keep the point under the mouse fixed
-      // (mx - tx) / scale == (mx - newTx) / newScale
-      // => newTx = mx - (mx - tx) * (newScale / scale)
-      const newX = mx - (mx - t.x) * (newScale / t.scale)
-      const newY = my - (my - t.y) * (newScale / t.scale)
+      const delta = e.deltaY < 0 ? ZOOM_FACTOR : 1 / ZOOM_FACTOR
+      const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, currentScale * delta))
 
-      applyTransform({ x: newX, y: newY, scale: newScale })
+      // Keep point under mouse fixed:
+      // mouseX = currentTx + pointOnImg.x * currentScale
+      // mouseX = newTx + pointOnImg.x * newScale
+      // => newTx = mouseX - (mouseX - currentTx) * (newScale / currentScale)
+      const ratio = newScale / currentScale
+      const newTx = mouseX - (mouseX - currentTx) * ratio
+      const newTy = mouseY - (mouseY - currentTy) * ratio
+
+      updateTransform(newScale, newTx, newTy)
     }
 
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [applyTransform])
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => el.removeEventListener('wheel', handleWheel)
+  }, [updateTransform])
 
-  // ── Pan (mouse) ───────────────────────────────────────────────────────────
-  const onMouseDownPan = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // Don't start pan if clicking a pin or if adding a pin
-    if (addingPin) return
-    if ((e.target as HTMLElement).closest('[data-pin]')) return
-    isPanning.current = true
-    panStart.current = {
-      clientX: e.clientX,
-      clientY: e.clientY,
-      tx: transformRef.current.x,
-      ty: transformRef.current.y,
-    }
-    e.currentTarget.style.cursor = 'grabbing'
-  }, [addingPin])
-
-  const onMouseMovePan = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!isPanning.current) return
-    const dx = e.clientX - panStart.current.clientX
-    const dy = e.clientY - panStart.current.clientY
-    applyTransform({
-      ...transformRef.current,
-      x: panStart.current.tx + dx,
-      y: panStart.current.ty + dy,
-    })
-  }, [applyTransform])
-
-  const onMouseUpPan = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    isPanning.current = false
-    e.currentTarget.style.cursor = addingPin ? 'crosshair' : 'grab'
-  }, [addingPin])
-
-  // ── Touch handlers ────────────────────────────────────────────────────────
-  const onTouchStart = useCallback((e: React.TouchEvent<HTMLDivElement>) => {
-    if (e.touches.length === 2) {
-      const a = e.touches[0], b = e.touches[1]
-      const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY
-      lastPinchDist.current = Math.sqrt(dx * dx + dy * dy)
-      lastPinchCenter.current = {
-        x: (a.clientX + b.clientX) / 2,
-        y: (a.clientY + b.clientY) / 2,
-      }
-    } else if (e.touches.length === 1) {
-      isPanning.current = true
-      panStart.current = {
-        clientX: e.touches[0].clientX,
-        clientY: e.touches[0].clientY,
-        tx: transformRef.current.x,
-        ty: transformRef.current.y,
-      }
-    }
-  }, [])
-
+  // ── TOUCH EVENTS ──────────────────────────────────────────────────────────
   useEffect(() => {
-    const el = outerRef.current
+    const el = viewportRef.current
     if (!el) return
-    const onTouchMove = (e: TouchEvent) => {
-      if (e.touches.length === 2 && lastPinchDist.current !== null && lastPinchCenter.current !== null) {
-        e.preventDefault()
+
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault()
+      if (e.touches.length === 2) {
         const a = e.touches[0], b = e.touches[1]
-        const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY
-        const dist = Math.sqrt(dx * dx + dy * dy)
-        const factor = dist / lastPinchDist.current
-        lastPinchDist.current = dist
-
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+        const mid = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
         const rect = el.getBoundingClientRect()
-        const cx = lastPinchCenter.current.x - rect.left
-        const cy = lastPinchCenter.current.y - rect.top
 
-        const t = transformRef.current
-        const newScale = clampScale(t.scale * factor)
-        const newX = cx - (cx - t.x) * (newScale / t.scale)
-        const newY = cy - (cy - t.y) * (newScale / t.scale)
-
-        lastPinchCenter.current = {
-          x: (a.clientX + b.clientX) / 2,
-          y: (a.clientY + b.clientY) / 2,
+        if (lastPinchDist.current !== null && lastPinchMid.current !== null) {
+          const factor = dist / lastPinchDist.current
+          const cx = mid.x - rect.left
+          const cy = mid.y - rect.top
+          const currentScale = scaleRef.current
+          const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, currentScale * factor))
+          const ratio = newScale / currentScale
+          updateTransform(
+            newScale,
+            cx - (cx - txRef.current) * ratio,
+            cy - (cy - tyRef.current) * ratio
+          )
         }
-        applyTransform({ x: newX, y: newY, scale: newScale })
+        lastPinchDist.current = dist
+        lastPinchMid.current = mid
       } else if (e.touches.length === 1 && isPanning.current) {
-        e.preventDefault()
-        const dx = e.touches[0].clientX - panStart.current.clientX
-        const dy = e.touches[0].clientY - panStart.current.clientY
-        applyTransform({
-          ...transformRef.current,
-          x: panStart.current.tx + dx,
-          y: panStart.current.ty + dy,
-        })
+        updateTransform(
+          scaleRef.current,
+          panStart.current.tx + e.touches[0].clientX - panStart.current.x,
+          panStart.current.ty + e.touches[0].clientY - panStart.current.y
+        )
       }
     }
-    const onTouchEnd = () => {
+
+    const handleTouchEnd = () => {
       lastPinchDist.current = null
-      lastPinchCenter.current = null
+      lastPinchMid.current = null
       isPanning.current = false
     }
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd)
-    el.addEventListener('touchcancel', onTouchEnd)
+
+    el.addEventListener('touchmove', handleTouchMove, { passive: false })
+    el.addEventListener('touchend', handleTouchEnd)
+    el.addEventListener('touchcancel', handleTouchEnd)
     return () => {
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
-      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('touchmove', handleTouchMove)
+      el.removeEventListener('touchend', handleTouchEnd)
+      el.removeEventListener('touchcancel', handleTouchEnd)
     }
-  }, [applyTransform])
+  }, [updateTransform])
 
-  // ── Image coordinate helpers ──────────────────────────────────────────────
-  /**
-   * Convert client (screen) coordinates to image-percentage coordinates (0-100).
-   * The image is rendered at position (tx, ty) with scale `scale` inside the outer div.
-   */
-  const clientToImagePercent = useCallback((clientX: number, clientY: number): { x: number; y: number } | null => {
-    const outer = outerRef.current
+  // ── Convert client coords to image percentage ─────────────────────────────
+  const clientToImgPercent = useCallback((clientX: number, clientY: number) => {
     const img = imgRef.current
-    if (!outer || !img) return null
-    const rect = outer.getBoundingClientRect()
-
-    // Position within outer div
-    const px = clientX - rect.left
-    const py = clientY - rect.top
-
-    const t = transformRef.current
-    // Image in the transformed space starts at (t.x, t.y)
-    // Image rendered width = naturalWidth * scale (but we use CSS which scales the container)
-    // Actually the image fills 100% of the inner div, so its rendered size is:
-    //   w = img.naturalWidth * t.scale  ... but we don't care about natural size
-    // The img element's rendered rect tells us the actual pixel rect on screen.
-    const imgRect = img.getBoundingClientRect()
-    const ix = clientX - imgRect.left
-    const iy = clientY - imgRect.top
-    const x = (ix / imgRect.width) * 100
-    const y = (iy / imgRect.height) * 100
+    if (!img) return null
+    const r = img.getBoundingClientRect()
+    const x = ((clientX - r.left) / r.width) * 100
+    const y = ((clientY - r.top) / r.height) * 100
     if (x < 0 || x > 100 || y < 0 || y > 100) return null
     return { x, y }
   }, [])
 
+  // ── Mouse pan ─────────────────────────────────────────────────────────────
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    if (addingPin) return
+    if ((e.target as HTMLElement).closest('[data-pin]')) return
+    isPanning.current = true
+    panStart.current = { x: e.clientX, y: e.clientY, tx: txRef.current, ty: tyRef.current }
+  }, [addingPin])
+
+  const onMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanning.current) return
+    updateTransform(
+      scaleRef.current,
+      panStart.current.tx + e.clientX - panStart.current.x,
+      panStart.current.ty + e.clientY - panStart.current.y
+    )
+  }, [updateTransform])
+
+  const onMouseUp = useCallback(() => {
+    isPanning.current = false
+  }, [])
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      const a = e.touches[0], b = e.touches[1]
+      lastPinchDist.current = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      lastPinchMid.current = { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+    } else if (e.touches.length === 1) {
+      isPanning.current = true
+      panStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, tx: txRef.current, ty: tyRef.current }
+    }
+  }, [])
+
   // ── Image click → place pin ───────────────────────────────────────────────
-  const onImageClick = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
+  const onImgClick = useCallback((e: React.MouseEvent<HTMLImageElement>) => {
     if (!addingPin || !canEdit) return
     e.stopPropagation()
-    const coords = clientToImagePercent(e.clientX, e.clientY)
+    const coords = clientToImgPercent(e.clientX, e.clientY)
     if (!coords) return
     setPinForm({ ...coords, title: '', notes: '', related_article_id: '', visibility: 'players', dsa_date_str: null })
     setPinDsaDate(null)
-  }, [addingPin, canEdit, clientToImagePercent])
+  }, [addingPin, canEdit, clientToImgPercent])
 
   // ── Pin drag ──────────────────────────────────────────────────────────────
   const updatePinMutation = useMutation({
@@ -292,40 +255,36 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
     e.preventDefault()
     e.stopPropagation()
     draggingPinId.current = pinId
-    dragDidMove.current = false
-    dragAnchor.current = { clientX: e.clientX, clientY: e.clientY }
+    dragMoved.current = false
+    dragStart.current = { x: e.clientX, y: e.clientY }
 
     const onMove = (me: MouseEvent) => {
-      if (!dragAnchor.current) return
-      const dx = Math.abs(me.clientX - dragAnchor.current.clientX)
-      const dy = Math.abs(me.clientY - dragAnchor.current.clientY)
-      if (!dragDidMove.current && (dx > 4 || dy > 4)) dragDidMove.current = true
-      if (!dragDidMove.current) return
-
-      const coords = clientToImagePercent(me.clientX, me.clientY)
-      if (!coords || !draggingPinId.current) return
+      if (!dragStart.current) return
+      if (!dragMoved.current && (Math.abs(me.clientX - dragStart.current.x) > 4 || Math.abs(me.clientY - dragStart.current.y) > 4)) {
+        dragMoved.current = true
+      }
+      if (!dragMoved.current || !draggingPinId.current) return
       const el = document.getElementById(`pin-${draggingPinId.current}`)
-      if (el) { el.style.left = `${coords.x}%`; el.style.top = `${coords.y}%` }
+      const coords = clientToImgPercent(me.clientX, me.clientY)
+      if (el && coords) { el.style.left = `${coords.x}%`; el.style.top = `${coords.y}%` }
     }
 
     const onUp = (ue: MouseEvent) => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
-      if (dragDidMove.current && draggingPinId.current) {
-        const coords = clientToImagePercent(ue.clientX, ue.clientY)
+      if (dragMoved.current && draggingPinId.current) {
+        const coords = clientToImgPercent(ue.clientX, ue.clientY)
         if (coords) updatePinMutation.mutate({ pinId: draggingPinId.current, x: coords.x, y: coords.y })
         else qc.invalidateQueries({ queryKey: ['map-pins', id] })
-      } else {
-        if (draggingPinId.current && !addingPin) {
-          setSelectedPin(prev => prev === draggingPinId.current ? null : draggingPinId.current!)
-        }
+      } else if (!dragMoved.current && draggingPinId.current && !addingPin) {
+        setSelectedPin(prev => prev === draggingPinId.current ? null : draggingPinId.current!)
       }
-      draggingPinId.current = null; dragAnchor.current = null; dragDidMove.current = false
+      draggingPinId.current = null; dragStart.current = null; dragMoved.current = false
     }
 
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
-  }, [canEdit, addingPin, clientToImagePercent, updatePinMutation, qc, id])
+  }, [canEdit, addingPin, clientToImgPercent, updatePinMutation, qc, id])
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const createPinMutation = useMutation({
@@ -356,7 +315,7 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
 
   // ── Derived data ──────────────────────────────────────────────────────────
   const visiblePins = (pins as PinWithDate[] ?? []).filter(p => isGm || p.visibility !== 'gm')
-  const filteredPins = visiblePins.filter(p => !isGm ? true : (showGmPins || p.visibility !== 'gm'))
+  const filteredPins = visiblePins.filter(p => isGm ? (showGmPins || p.visibility !== 'gm') : true)
   const chronoPins = filteredPins
     .filter(p => p.dsa_date_sort != null)
     .sort((a, b) => (a.dsa_date_sort ?? 0) - (b.dsa_date_sort ?? 0))
@@ -366,8 +325,6 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
 
   const imageUrl = assetService.getPublicUrl(map.image_path)
   const panelOpen = !!(selectedPin || pinForm)
-
-  const { x: tx, y: ty, scale } = transform
 
   return (
     <div className="h-screen flex flex-col">
@@ -382,32 +339,38 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
             <div className="flex items-center gap-1 bg-surface-700 rounded-lg px-2">
               <button
                 onClick={() => {
-                  const outer = outerRef.current
-                  if (!outer) return
-                  const rect = outer.getBoundingClientRect()
-                  const cx = rect.width / 2, cy = rect.height / 2
-                  const t = transformRef.current
-                  const newScale = clampScale(t.scale / 1.25)
-                  applyTransform({ x: cx - (cx - t.x) * (newScale / t.scale), y: cy - (cy - t.y) * (newScale / t.scale), scale: newScale })
+                  const el = viewportRef.current
+                  if (!el) return
+                  const r = el.getBoundingClientRect()
+                  const cx = r.width / 2, cy = r.height / 2
+                  const ns = Math.min(MAX_SCALE, scaleRef.current * 1.25)
+                  const ratio = ns / scaleRef.current
+                  updateTransform(ns, cx - (cx - txRef.current) * ratio, cy - (cy - tyRef.current) * ratio)
                 }}
-                className="btn-ghost p-1 text-slate-400 text-xs">−
+                className="btn-ghost p-1 text-slate-400" title="Hereinzoomen"
+              >
+                <ZoomIn size={15} />
               </button>
               <span className="text-xs text-slate-400 w-12 text-center">{Math.round(scale * 100)}%</span>
               <button
                 onClick={() => {
-                  const outer = outerRef.current
-                  if (!outer) return
-                  const rect = outer.getBoundingClientRect()
-                  const cx = rect.width / 2, cy = rect.height / 2
-                  const t = transformRef.current
-                  const newScale = clampScale(t.scale * 1.25)
-                  applyTransform({ x: cx - (cx - t.x) * (newScale / t.scale), y: cy - (cy - t.y) * (newScale / t.scale), scale: newScale })
+                  const el = viewportRef.current
+                  if (!el) return
+                  const r = el.getBoundingClientRect()
+                  const cx = r.width / 2, cy = r.height / 2
+                  const ns = Math.max(MIN_SCALE, scaleRef.current / 1.25)
+                  const ratio = ns / scaleRef.current
+                  updateTransform(ns, cx - (cx - txRef.current) * ratio, cy - (cy - tyRef.current) * ratio)
                 }}
-                className="btn-ghost p-1 text-slate-400 text-xs">+
+                className="btn-ghost p-1 text-slate-400" title="Herauszoomen"
+              >
+                <ZoomOut size={15} />
               </button>
               <button
-                onClick={() => applyTransform({ x: 0, y: 0, scale: 1 })}
-                className="btn-ghost p-1 text-slate-500 text-xs ml-1" title="Reset">↺
+                onClick={() => updateTransform(1, 0, 0)}
+                className="btn-ghost p-1 text-slate-500" title="Zurücksetzen"
+              >
+                <RotateCcw size={13} />
               </button>
             </div>
 
@@ -437,56 +400,46 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
       <div className="flex-1 overflow-hidden flex min-h-0">
         {/* ── Map viewport ── */}
         <div
-          ref={outerRef}
-          className={`flex-1 overflow-hidden bg-surface-900 relative select-none ${addingPin ? 'cursor-crosshair' : 'cursor-grab'}`}
+          ref={viewportRef}
+          className={`flex-1 overflow-hidden bg-surface-900 relative select-none ${addingPin ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'}`}
           style={{ touchAction: 'none' }}
-          onMouseDown={onMouseDownPan}
-          onMouseMove={onMouseMovePan}
-          onMouseUp={onMouseUpPan}
-          onMouseLeave={onMouseUpPan}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
           onTouchStart={onTouchStart}
         >
-          {/* ── Transformed canvas ── */}
+          {/* Transformed layer */}
           <div
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
-              width: '100%',
-              height: '100%',
-              // We use a wrapper that is translated+scaled; the image inside fills it naturally
+              transformOrigin: '0 0',
+              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+              willChange: 'transform',
+              lineHeight: 0,
+              display: 'inline-block',
             }}
           >
-            <div
-              style={{
-                position: 'absolute',
-                transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
-                transformOrigin: '0 0',
-                // Size: let the image determine its natural size
-                display: 'inline-block',
-                lineHeight: 0,
-              }}
-            >
+            <div style={{ position: 'relative', display: 'inline-block' }}>
               <img
                 ref={imgRef}
                 src={imageUrl}
                 alt={map.title}
                 draggable={false}
                 onLoad={() => setImgLoaded(true)}
-                onClick={onImageClick}
-                style={{ display: 'block', maxWidth: 'none', userSelect: 'none' }}
+                onClick={onImgClick}
+                style={{ display: 'block', maxWidth: 'none', userSelect: 'none', pointerEvents: addingPin ? 'auto' : 'none' }}
               />
 
-              {/* ── SVG overlay for chronological path ── */}
+              {/* SVG path overlay */}
               {imgLoaded && showPath && chronoPins.length >= 2 && imgRef.current && (() => {
                 const iw = imgRef.current.naturalWidth || imgRef.current.offsetWidth
                 const ih = imgRef.current.naturalHeight || imgRef.current.offsetHeight
                 return (
-                  <svg
-                    width={iw}
-                    height={ih}
-                    style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', overflow: 'visible' }}
-                  >
+                  <svg width={iw} height={ih}
+                    style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', overflow: 'visible' }}>
                     <defs>
                       <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
                         <polygon points="0 0, 8 3, 0 6" fill="#3355ff" opacity="0.8" />
@@ -496,19 +449,17 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                       if (i === 0) return null
                       const prev = chronoPins[i - 1]
                       const x1 = (prev.x / 100) * iw, y1 = (prev.y / 100) * ih
-                      const x2 = (pin.x / 100) * iw,  y2 = (pin.y / 100) * ih
+                      const x2 = (pin.x / 100) * iw, y2 = (pin.y / 100) * ih
                       const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 30
                       return (
-                        <g key={`${prev.id}-${pin.id}`}>
-                          <path d={`M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`}
-                            fill="none" stroke="#3355ff" strokeWidth="2"
-                            strokeDasharray="6 4" opacity="0.6" markerEnd="url(#arrowhead)" />
-                        </g>
+                        <path key={`${prev.id}-${pin.id}`}
+                          d={`M ${x1} ${y1} Q ${mx} ${my} ${x2} ${y2}`}
+                          fill="none" stroke="#3355ff" strokeWidth="2"
+                          strokeDasharray="6 4" opacity="0.6" markerEnd="url(#arrowhead)" />
                       )
                     })}
                     {chronoPins.map((pin, i) => {
-                      const cx = (pin.x / 100) * iw
-                      const cy = (pin.y / 100) * ih - 14
+                      const cx = (pin.x / 100) * iw, cy = (pin.y / 100) * ih - 14
                       return (
                         <g key={`order-${pin.id}`}>
                           <circle cx={cx} cy={cy} r="9" fill="#1a35f5" opacity="0.9" />
@@ -521,14 +472,11 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                 )
               })()}
 
-              {/* ── Pins ── */}
-              {imgLoaded && imgRef.current && filteredPins.map(pin => {
+              {/* Pins */}
+              {imgLoaded && filteredPins.map(pin => {
                 const typedPin = pin as PinWithDate
                 const isChronoPin = chronoPins.some(p => p.id === pin.id)
                 const isSelected = selectedPin === pin.id
-                const iw = imgRef.current!.naturalWidth || imgRef.current!.offsetWidth
-                const ih = imgRef.current!.naturalHeight || imgRef.current!.offsetHeight
-
                 return (
                   <div
                     id={`pin-${pin.id}`}
@@ -542,6 +490,7 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                       transform: 'translate(-50%, -50%)',
                       cursor: canEdit && !addingPin ? 'grab' : 'pointer',
                       zIndex: isSelected ? 20 : 10,
+                      pointerEvents: 'auto',
                     }}
                     title={pin.title}
                   >
@@ -572,7 +521,7 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
                 )
               })}
 
-              {/* ── Ghost pin while placing ── */}
+              {/* Ghost pin while placing */}
               {pinForm && (
                 <div style={{ position: 'absolute', left: `${pinForm.x}%`, top: `${pinForm.y}%`, transform: 'translate(-50%, -50%)', pointerEvents: 'none', zIndex: 30 }}>
                   <div className="w-6 h-6 rounded-full border-2 bg-emerald-500 border-emerald-300 flex items-center justify-center shadow-lg animate-pulse">
@@ -699,7 +648,6 @@ export default function MapDetailPage({ worldId }: { worldId: string }) {
         </div>
       )}
 
-      {/* Chronological legend */}
       {showPath && chronoPins.length >= 2 && (
         <div className="border-t border-surface-600 bg-surface-800/80 px-4 py-2 flex-shrink-0">
           <div className="flex items-center gap-1 flex-wrap">

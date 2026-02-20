@@ -10,33 +10,6 @@ import { LoadingScreen } from '@/components/ui/Spinner'
 import Modal from '@/components/ui/Modal'
 import toast from 'react-hot-toast'
 
-/**
- * Supabase Storage Image Transformation:
- * Append ?width=400&quality=60 for small previews.
- * This only works if the image is served from a public Supabase storage URL.
- * Falls back to the original if the image fails to load.
- */
-function getThumbnailUrl(originalUrl: string, width = 400, quality = 60): string {
-  try {
-    const url = new URL(originalUrl)
-    // Supabase image transformation requires /render/image/public/ in the path
-    // Standard storage URL: /storage/v1/object/public/...
-    // Transformed URL:       /storage/v1/render/image/public/...
-    if (url.pathname.includes('/storage/v1/object/public/')) {
-      url.pathname = url.pathname.replace(
-        '/storage/v1/object/public/',
-        '/storage/v1/render/image/public/'
-      )
-      url.searchParams.set('width', String(width))
-      url.searchParams.set('quality', String(quality))
-      return url.toString()
-    }
-  } catch {
-    // ignore, fall through
-  }
-  return originalUrl
-}
-
 export default function MapsPage({ worldId }: { worldId: string }) {
   const { canEdit } = useWorld()
   const qc = useQueryClient()
@@ -85,24 +58,21 @@ export default function MapsPage({ worldId }: { worldId: string }) {
         {maps && maps.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {maps.map(map => {
-              const originalUrl = assetService.getPublicUrl(map.image_path)
-              const thumbUrl = getThumbnailUrl(originalUrl, 400, 65)
+              const imageUrl = assetService.getPublicUrl(map.image_path)
               return (
                 <Link key={map.id} to={`/maps/${map.id}`}
                   className="card overflow-hidden hover:border-surface-400 transition-colors group">
+                  {/* Fixed-size container with CSS object-fit - no full image download needed by browser */}
                   <div className="aspect-video bg-surface-700 overflow-hidden relative">
                     <img
-                      src={thumbUrl}
+                      src={imageUrl}
                       alt={map.title}
+                      width={400}
+                      height={225}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       loading="lazy"
-                      onError={e => {
-                        // Fallback to original if thumbnail transform not available
-                        const img = e.target as HTMLImageElement
-                        if (img.src !== originalUrl) {
-                          img.src = originalUrl
-                        }
-                      }}
+                      decoding="async"
+                      style={{ contentVisibility: 'auto' }}
                     />
                   </div>
                   <div className="p-3">
